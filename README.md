@@ -28,6 +28,11 @@ run most of this if you followed along step by step):
    the access judges/teams need
 3. `sql/seed/001_teams.sql` — loads your 30 teams
 4. `sql/004_scan_undo_policy.sql` — lets judges undo their own last scan
+5. `sql/005_idempotent_scans.sql` — adds a unique `client_scan_id` so a
+   retried offline scan can never be recorded twice
+6. `sql/006_scan_validation_trigger.sql` — rejects any scan that doesn't
+   match the team's actual next expected station/event, enforced by the
+   database itself (not just the app's UI)
 
 Then, in the Supabase dashboard:
 
@@ -42,7 +47,18 @@ a fake internal address before ever touching Supabase — nobody sees or types
 anything email-like. The conversion is `username` → `username@judges.fightorflight`
 (the domain is set by `NEXT_PUBLIC_AUTH_FAKE_DOMAIN` in your env vars).
 
-To create a judge login:
+**Create these from `/admin` directly** — log in with your `ADMIN_PASSWORD`,
+and you'll see two forms: "Create a judge login" and "Create a team login".
+Fill in a name/team, a username, and a password, and it creates the actual
+Supabase Auth account, links it to the right table, and (for judges)
+assigns their teams — all in one step. No manual Supabase dashboard work
+or SQL required.
+
+The teams table on `/admin` also shows a "Viewer login" column so you can
+see at a glance which teams still need one set up.
+
+<details>
+<summary>Manual fallback (only if the admin UI is ever unavailable)</summary>
 
 1. Supabase → **Authentication → Users → Add user**
 2. Email: `nicolene@judges.fightorflight` (i.e. their chosen username + your
@@ -61,6 +77,7 @@ Team logins work the same way, but insert into `team_viewers` instead:
 ```sql
 insert into team_viewers (id, team_id) values ('<uuid>', 'FF073001');
 ```
+</details>
 
 Since judge assignments are still being finalized, this can happen any time
 before race day — it doesn't block anything else.
@@ -88,14 +105,23 @@ npm run dev
   data is lost, no action needed from the judge. This doesn't replace your
   manual backup sheet as the ultimate fallback.
 - **Undo last scan**: on the scan screen, for mis-scans.
+- **Duplicate-proof scans**: every scan carries a unique ID generated on
+  the judge's phone, so if an offline retry ever resends a scan that
+  actually already made it through, the database silently ignores the
+  duplicate rather than recording the station twice.
+- **Wrong-scan protection**: the database itself checks that any incoming
+  scan matches the team's real next expected station/event, and rejects
+  it otherwise — this isn't just a UI nicety, it holds even if a scan
+  somehow bypassed the normal screen.
+- **Excel export**: the "Export to Excel" button on `/admin` downloads a
+  workbook with Results, Teams, Scans, and Penalties sheets, generated
+  live from the database — a real backup file, not just what's on screen.
 - **Admin password**: `/admin` is gated by a single shared password
   (`ADMIN_PASSWORD` in your env vars) rather than a full user account — this
   is intentionally simple since only you'll use it. It's fine for a one-day
   private event tool, but don't reuse this password anywhere sensitive.
 
 ## What's not built yet
-
-- CSV/spreadsheet export matching your original Race HQ format
 - Station-side QR codes (currently the sequence 1→12 is assumed in order)
 
 Happy to build any of these next.

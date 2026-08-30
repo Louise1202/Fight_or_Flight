@@ -21,17 +21,34 @@ export default function AdminDashboard({
   judges,
   assignments,
   scans,
+  teamsWithViewer,
 }: {
   teams: Team[];
   judges: Judge[];
   assignments: Assignment[];
   scans: Scan[];
+  teamsWithViewer: string[];
 }) {
   const [rows, setRows] = useState<Team[]>(teams);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentList, setAssignmentList] = useState<Assignment[]>(assignments);
   const [newJudgeId, setNewJudgeId] = useState(judges[0]?.id ?? "");
   const [newTeamId, setNewTeamId] = useState("");
+
+  // --- Create judge form state ---
+  const [judgeName, setJudgeName] = useState("");
+  const [judgeUsername, setJudgeUsername] = useState("");
+  const [judgePassword, setJudgePassword] = useState("");
+  const [judgeTeamIds, setJudgeTeamIds] = useState<string[]>([]);
+  const [creatingJudge, setCreatingJudge] = useState(false);
+  const [judgeCreateStatus, setJudgeCreateStatus] = useState<string | null>(null);
+
+  // --- Create team viewer form state ---
+  const [viewerTeamId, setViewerTeamId] = useState(teams[0]?.id ?? "");
+  const [viewerUsername, setViewerUsername] = useState("");
+  const [viewerPassword, setViewerPassword] = useState("");
+  const [creatingViewer, setCreatingViewer] = useState(false);
+  const [viewerCreateStatus, setViewerCreateStatus] = useState<string | null>(null);
 
   function updateField(id: string, field: keyof Team, value: string) {
     setRows((prev) =>
@@ -82,9 +99,88 @@ export default function AdminDashboard({
     }
   }
 
+  function toggleJudgeTeam(teamId: string) {
+    setJudgeTeamIds((prev) =>
+      prev.includes(teamId) ? prev.filter((t) => t !== teamId) : [...prev, teamId]
+    );
+  }
+
+  async function createJudge(e: React.FormEvent) {
+    e.preventDefault();
+    setJudgeCreateStatus(null);
+    setCreatingJudge(true);
+
+    const res = await fetch("/api/admin/judges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: judgeName,
+        username: judgeUsername,
+        password: judgePassword,
+        teamIds: judgeTeamIds,
+      }),
+    });
+    const data = await res.json();
+    setCreatingJudge(false);
+
+    if (!res.ok) {
+      setJudgeCreateStatus(data.error ?? "Something went wrong.");
+      return;
+    }
+
+    setJudgeCreateStatus(
+      `Created! Give this judge username "${judgeUsername}" and the password you chose.`
+    );
+    setJudgeName("");
+    setJudgeUsername("");
+    setJudgePassword("");
+    setJudgeTeamIds([]);
+    // Simplest reliable way to show the new judge everywhere (list,
+    // dropdowns, assignments) without hand-rolling extra state syncing.
+    setTimeout(() => window.location.reload(), 1200);
+  }
+
+  async function createViewer(e: React.FormEvent) {
+    e.preventDefault();
+    setViewerCreateStatus(null);
+    setCreatingViewer(true);
+
+    const res = await fetch("/api/admin/team-viewers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        teamId: viewerTeamId,
+        username: viewerUsername,
+        password: viewerPassword,
+      }),
+    });
+    const data = await res.json();
+    setCreatingViewer(false);
+
+    if (!res.ok) {
+      setViewerCreateStatus(data.error ?? "Something went wrong.");
+      return;
+    }
+
+    setViewerCreateStatus(
+      `Created! Give ${viewerTeamId} username "${viewerUsername}" and the password you chose.`
+    );
+    setViewerUsername("");
+    setViewerPassword("");
+    setTimeout(() => window.location.reload(), 1200);
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="mb-6 font-display text-2xl text-fofRed">RACE HQ — ADMIN</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="font-display text-2xl text-fofRed">RACE HQ — ADMIN</h1>
+        <a
+          href="/api/admin/export"
+          className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
+        >
+          Export to Excel
+        </a>
+      </div>
 
       <section className="mb-10 overflow-x-auto">
         <h2 className="mb-2 font-display text-lg">Teams</h2>
@@ -98,6 +194,7 @@ export default function AdminDashboard({
               <th className="p-2">Division</th>
               <th className="p-2">Wave</th>
               <th className="p-2">Progress</th>
+              <th className="p-2">Viewer login</th>
               <th className="p-2"></th>
             </tr>
           </thead>
@@ -105,6 +202,7 @@ export default function AdminDashboard({
             {rows.map((team) => {
               const teamScans = scans.filter((s: any) => (s as any).team_id === team.id);
               const next = getNextAction(teamScans as Scan[]);
+              const hasViewer = teamsWithViewer.includes(team.id);
               return (
                 <tr key={team.id} className="border-b border-fofCharcoal">
                   <td className="p-2 font-mono text-xs">{team.id}</td>
@@ -146,6 +244,13 @@ export default function AdminDashboard({
                   <td className="p-2 text-fofGunmetal">
                     {next.isFinished ? "Finished" : next.label}
                   </td>
+                  <td className="p-2 text-xs">
+                    {hasViewer ? (
+                      <span className="text-fofGunmetal">✓ set up</span>
+                    ) : (
+                      <span className="text-fofRed">none yet</span>
+                    )}
+                  </td>
                   <td className="p-2">
                     <button
                       onClick={() => saveRow(team)}
@@ -160,6 +265,103 @@ export default function AdminDashboard({
             })}
           </tbody>
         </table>
+      </section>
+
+      <section className="mb-10 grid gap-8 md:grid-cols-2">
+        <div>
+          <h2 className="mb-2 font-display text-lg">Create a judge login</h2>
+          <form onSubmit={createJudge} className="space-y-2 rounded border border-fofCharcoal p-4">
+            <input
+              placeholder="Judge's name (e.g. Nicolene)"
+              value={judgeName}
+              onChange={(e) => setJudgeName(e.target.value)}
+              required
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            />
+            <input
+              placeholder="Username (e.g. nicolene)"
+              value={judgeUsername}
+              onChange={(e) => setJudgeUsername(e.target.value)}
+              required
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            />
+            <input
+              type="text"
+              placeholder="Password (min 6 characters)"
+              value={judgePassword}
+              onChange={(e) => setJudgePassword(e.target.value)}
+              required
+              minLength={6}
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            />
+            <div className="max-h-36 overflow-y-auto rounded border border-fofCharcoal p-2 text-sm">
+              <p className="mb-1 text-fofGunmetal">Assign teams (optional, can add later):</p>
+              {teams.map((t) => (
+                <label key={t.id} className="flex items-center gap-2 py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={judgeTeamIds.includes(t.id)}
+                    onChange={() => toggleJudgeTeam(t.id)}
+                  />
+                  {t.id} — {t.team_name}
+                </label>
+              ))}
+            </div>
+            <button
+              type="submit"
+              disabled={creatingJudge}
+              className="tap-target w-full rounded bg-fofRed font-display disabled:opacity-50"
+            >
+              {creatingJudge ? "Creating..." : "Create judge login"}
+            </button>
+            {judgeCreateStatus && (
+              <p className="text-sm text-fofGunmetal">{judgeCreateStatus}</p>
+            )}
+          </form>
+        </div>
+
+        <div>
+          <h2 className="mb-2 font-display text-lg">Create a team login</h2>
+          <form onSubmit={createViewer} className="space-y-2 rounded border border-fofCharcoal p-4">
+            <select
+              value={viewerTeamId}
+              onChange={(e) => setViewerTeamId(e.target.value)}
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            >
+              {teams.map((t) => (
+                <option key={t.id} value={t.id} className="bg-fofBlack">
+                  {t.id} — {t.team_name} {teamsWithViewer.includes(t.id) ? "(already has one)" : ""}
+                </option>
+              ))}
+            </select>
+            <input
+              placeholder="Username (e.g. team01)"
+              value={viewerUsername}
+              onChange={(e) => setViewerUsername(e.target.value)}
+              required
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            />
+            <input
+              type="text"
+              placeholder="Password (min 6 characters)"
+              value={viewerPassword}
+              onChange={(e) => setViewerPassword(e.target.value)}
+              required
+              minLength={6}
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+            />
+            <button
+              type="submit"
+              disabled={creatingViewer}
+              className="tap-target w-full rounded bg-fofRed font-display disabled:opacity-50"
+            >
+              {creatingViewer ? "Creating..." : "Create team login"}
+            </button>
+            {viewerCreateStatus && (
+              <p className="text-sm text-fofGunmetal">{viewerCreateStatus}</p>
+            )}
+          </form>
+        </div>
       </section>
 
       <section>

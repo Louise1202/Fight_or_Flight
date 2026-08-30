@@ -17,6 +17,7 @@ type Team = {
 type ScanRow = Scan & { id: number };
 
 type PendingScan = {
+  client_scan_id: string;
   team_id: string;
   station_number: number;
   event_type: "arrive" | "leave";
@@ -26,6 +27,14 @@ type PendingScan = {
 
 function queueKey(teamId: string) {
   return `pending_scans_${teamId}`;
+}
+
+// Every browser Claude targets here supports crypto.randomUUID (all modern
+// mobile browsers). This is what makes a scan safely retryable: if the
+// same client_scan_id is ever submitted twice, the database's unique
+// constraint rejects the second one instead of recording it again.
+function newScanId(): string {
+  return crypto.randomUUID();
 }
 
 export default function ScanScreen({
@@ -50,6 +59,15 @@ export default function ScanScreen({
   const next = getNextAction(scans);
   const splits = buildSplits(scans, team.start_time);
 
+  const refreshFromServer = useCallback(async () => {
+    const { data } = await supabase
+      .from("scans")
+      .select("id, station_number, event_type, scanned_at")
+      .eq("team_id", team.id)
+      .order("scanned_at", { ascending: true });
+    if (data) setScans(data);
+  }, [supabase, team.id]);
+
   const refreshPendingCount = useCallback(() => {
     const raw = localStorage.getItem(queueKey(team.id));
     const list: PendingScan[] = raw ? JSON.parse(raw) : [];
@@ -64,20 +82,21 @@ export default function ScanScreen({
     const remaining: PendingScan[] = [];
     for (const item of list) {
       const { error } = await supabase.from("scans").insert(item);
-      if (error) remaining.push(item);
+      // A 23505 (unique violation) here means this exact scan already
+      // made it to the server on an earlier attempt - that's a success,
+      // not a failure, so we drop it from the queue rather than retrying
+      // forever.
+      if (error && error.code !== "23505") {
+        remaining.push(item);
+      }
     }
     localStorage.setItem(queueKey(team.id), JSON.stringify(remaining));
     refreshPendingCount();
 
-    if (remaining.length === 0) {
-      const { data } = await supabase
-        .from("scans")
-        .select("id, station_number, event_type, scanned_at")
-        .eq("team_id", team.id)
-        .order("scanned_at", { ascending: true });
-      if (data) setScans(data);
+    if (remaining.length < list.length) {
+      await refreshFromServer();
     }
-  }, [supabase, team.id, refreshPendingCount]);
+  }, [supabase, team.id, refreshPendingCount, refreshFromServer]);
 
   useEffect(() => {
     refreshPendingCount();
@@ -91,6 +110,7 @@ export default function ScanScreen({
 
   async function recordScan(stationNumber: number, eventType: "arrive" | "leave") {
     const payload: PendingScan = {
+      client_scan_id: newScanId(),
       team_id: team.id,
       station_number: stationNumber,
       event_type: eventType,
@@ -105,7 +125,21 @@ export default function ScanScreen({
       .single();
 
     if (error) {
-      // Offline or request failed - queue it locally and keep going.
+      if (error.message?.includes("INVALID_SCAN")) {
+        // The database itself rejected this as out-of-sequence - this
+        // should be rare (the UI only ever offers the correct next
+        // action), but if it happens, don't queue it: retrying the same
+        // wrong scan will never succeed. Refresh from the server so the
+        // screen shows the true current state.
+        setMessage(
+          "That scan doesn't match this team's expected next step. Refreshing..."
+        );
+        await refreshFromServer();
+        return;
+      }
+
+      // Anything else (no network, DNS failure, etc.) - queue it locally
+      // and keep going. The judge shouldn't be blocked by a bad signal.
       const raw = localStorage.getItem(queueKey(team.id));
       const list: PendingScan[] = raw ? JSON.parse(raw) : [];
       list.push(payload);
