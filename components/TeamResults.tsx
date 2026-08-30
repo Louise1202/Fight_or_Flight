@@ -144,16 +144,22 @@ export default function TeamResults({
         </h2>
         <ul className="space-y-1 text-sm">
           {splits.map((s) => (
-            <li
-              key={s.station}
-              className="flex justify-between border-b border-fofCharcoal py-1"
-            >
-              <span>{s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}</span>
-              <span className="text-fofGunmetal">
-                {s.runMs != null && `run ${formatDuration(s.runMs)}`}
-                {s.stationMs != null && ` · station ${formatDuration(s.stationMs)}`}
-                {s.runMs == null && s.stationMs == null && "—"}
-              </span>
+            <li key={s.station}>
+              {s.runMs != null && (
+                <p className="py-0.5 text-center text-xs text-fofGunmetal">
+                  {formatDuration(s.runMs)}
+                </p>
+              )}
+              <div className="flex justify-between border-b border-fofCharcoal py-1">
+                <span>{s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}</span>
+                <span className="text-fofGunmetal">
+                  {s.stationMs != null
+                    ? formatDuration(s.stationMs)
+                    : s.runMs == null
+                    ? "—"
+                    : ""}
+                </span>
+              </div>
             </li>
           ))}
         </ul>
