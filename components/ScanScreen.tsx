@@ -32,7 +32,30 @@ function queueKey(teamId: string) {
 }
 
 function newScanId(): string {
-  return crypto.randomUUID();
+  // crypto.randomUUID() only exists on fairly recent browsers (iOS 15.4+,
+  // for example) - on an older phone this would throw and crash the
+  // whole scan screen the instant a judge tries to record a scan. Fall
+  // back progressively so this works on any device a judge might be
+  // using on race day.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  // Last resort (extremely old/unusual browsers only) - built without
+  // crypto, but still in valid UUID format since the database column
+  // requires it.
+  const rand = () => Math.floor(Math.random() * 16).toString(16);
+  const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+  return template.replace(/[xy]/g, (c) => {
+    if (c === "y") return (Math.floor(Math.random() * 4) + 8).toString(16);
+    return rand();
+  });
 }
 
 export default function ScanScreen({
