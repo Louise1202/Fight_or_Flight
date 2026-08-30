@@ -104,6 +104,7 @@ export default function ScanScreen({
   const [penaltySeconds, setPenaltySeconds] = useState("");
   const [penaltyNote, setPenaltyNote] = useState("");
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const started = hasWaveStarted(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
@@ -201,6 +202,16 @@ export default function ScanScreen({
   }, [flushQueue, refreshPendingCount]);
 
   async function recordScan(stationNumber: number, eventType: "arrive" | "leave") {
+    if (submitting) return; // a previous tap is still being recorded - ignore this one
+    setSubmitting(true);
+    try {
+      await doRecordScan(stationNumber, eventType);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function doRecordScan(stationNumber: number, eventType: "arrive" | "leave") {
     const payload: PendingScan = {
       client_scan_id: newScanId(),
       team_id: team.id,
@@ -238,10 +249,12 @@ export default function ScanScreen({
     }
 
     setScans((prev) => [...prev, data]);
-    setMessage(null);
+    setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded for station ${stationNumber === 13 ? "FINISH" : stationNumber}.`);
   }
 
   function handleDecode(text: string) {
+    if (submitting) return; // already recording a previous scan - ignore
+
     // Normalize both sides the same way before comparing - strips any
     // invisible whitespace, zero-width characters, or casing difference
     // that could otherwise cause a false "wrong team" mismatch even when
@@ -360,9 +373,10 @@ export default function ScanScreen({
                     setMessage(null);
                     setCameraOn(true);
                   }}
-                  className="tap-target w-full rounded-md bg-fofRed font-display text-lg"
+                  disabled={submitting}
+                  className="tap-target w-full rounded-md bg-fofRed font-display text-lg disabled:opacity-50"
                 >
-                  Scan QR code
+                  {submitting ? "Recording..." : "Scan QR code"}
                 </button>
               ) : (
                 <>
@@ -390,20 +404,32 @@ export default function ScanScreen({
                     value={manualCode}
                     onChange={(e) => setManualCode(e.target.value)}
                     placeholder={team.id}
-                    className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3 uppercase"
+                    disabled={submitting}
+                    className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3 uppercase disabled:opacity-50"
                   />
                   <button
                     onClick={handleManualConfirm}
-                    className="tap-target rounded-md border border-fofRed px-4 text-fofRed"
+                    disabled={submitting || !manualCode.trim()}
+                    className="tap-target rounded-md border border-fofRed px-4 text-fofRed disabled:opacity-50"
                   >
-                    Confirm
+                    {submitting ? "..." : "Confirm"}
                   </button>
                 </div>
               </details>
             </div>
           )}
 
-          {message && <p className="mt-3 text-sm text-fofRed">{message}</p>}
+          {message && (
+            <p
+              className={`mt-3 text-sm ${
+                message.startsWith("✓") || message.startsWith("Saved offline")
+                  ? "text-green-500"
+                  : "text-fofRed"
+              }`}
+            >
+              {message}
+            </p>
+          )}
 
           <div className="mt-4 flex justify-between text-sm">
             <button onClick={undoLast} className="text-fofGunmetal underline">
