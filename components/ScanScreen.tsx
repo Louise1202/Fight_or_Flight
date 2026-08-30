@@ -222,7 +222,14 @@ export default function ScanScreen({
   }
 
   function handleDecode(text: string) {
-    if (text !== team.id) {
+    // Normalize both sides the same way before comparing - strips any
+    // invisible whitespace, zero-width characters, or casing difference
+    // that could otherwise cause a false "wrong team" mismatch even when
+    // the codes look identical on screen.
+    const normalize = (s: string) =>
+      s.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toUpperCase();
+
+    if (normalize(text) !== normalize(team.id)) {
       setMessage(`That QR is for a different team (${text}). Scan ${team.id} instead.`);
       return;
     }
