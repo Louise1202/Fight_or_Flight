@@ -31,6 +31,30 @@ function queueKey(teamId: string) {
   return `pending_scans_${teamId}`;
 }
 
+// Reading/writing the local scan queue must never crash the screen, even
+// if the stored data is ever malformed (e.g. from an interrupted save) -
+// a corrupted queue entry is far less costly than a scan screen that
+// won't load at all.
+function readQueue(teamId: string): PendingScan[] {
+  try {
+    const raw = localStorage.getItem(queueKey(teamId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    localStorage.removeItem(queueKey(teamId));
+    return [];
+  }
+}
+
+function writeQueue(teamId: string, list: PendingScan[]) {
+  try {
+    localStorage.setItem(queueKey(teamId), JSON.stringify(list));
+  } catch {
+    // Storage full/unavailable - nothing more to do locally.
+  }
+}
+
 function newScanId(): string {
   // crypto.randomUUID() only exists on fairly recent browsers (iOS 15.4+,
   // for example) - on an older phone this would throw and crash the
@@ -119,14 +143,12 @@ export default function ScanScreen({
   }, [supabase, team.id]);
 
   const refreshPendingCount = useCallback(() => {
-    const raw = localStorage.getItem(queueKey(team.id));
-    const list: PendingScan[] = raw ? JSON.parse(raw) : [];
+    const list = readQueue(team.id);
     setPendingCount(list.length);
   }, [team.id]);
 
   const flushQueue = useCallback(async () => {
-    const raw = localStorage.getItem(queueKey(team.id));
-    const list: PendingScan[] = raw ? JSON.parse(raw) : [];
+    const list = readQueue(team.id);
     if (list.length === 0) return;
 
     const remaining: PendingScan[] = [];
@@ -136,7 +158,7 @@ export default function ScanScreen({
         remaining.push(item);
       }
     }
-    localStorage.setItem(queueKey(team.id), JSON.stringify(remaining));
+    writeQueue(team.id, remaining);
     refreshPendingCount();
 
     if (remaining.length < list.length) {
@@ -152,8 +174,7 @@ export default function ScanScreen({
     // page reloads (its data lives in localStorage, not in the scans
     // fetched from the server) - the banner would say "waiting to sync"
     // while the rest of the screen quietly forgot it happened.
-    const raw = localStorage.getItem(queueKey(team.id));
-    const queued: PendingScan[] = raw ? JSON.parse(raw) : [];
+    const queued = readQueue(team.id);
     if (queued.length > 0) {
       setScans((prev) => {
         const existingIds = new Set(prev.map((s) => (s as any).client_scan_id));
@@ -204,10 +225,9 @@ export default function ScanScreen({
         return;
       }
 
-      const raw = localStorage.getItem(queueKey(team.id));
-      const list: PendingScan[] = raw ? JSON.parse(raw) : [];
+      const list = readQueue(team.id);
       list.push(payload);
-      localStorage.setItem(queueKey(team.id), JSON.stringify(list));
+      writeQueue(team.id, list);
       refreshPendingCount();
       setScans((prev) => [
         ...prev,
@@ -253,10 +273,9 @@ export default function ScanScreen({
     if (!last) return;
 
     if (last.id < 0) {
-      const raw = localStorage.getItem(queueKey(team.id));
-      const list: PendingScan[] = raw ? JSON.parse(raw) : [];
+      const list = readQueue(team.id);
       list.pop();
-      localStorage.setItem(queueKey(team.id), JSON.stringify(list));
+      writeQueue(team.id, list);
       refreshPendingCount();
     } else {
       await supabase.from("scans").delete().eq("id", last.id);
@@ -347,7 +366,14 @@ export default function ScanScreen({
                 </button>
               ) : (
                 <>
-                  <QrScanner active={cameraOn} onDecode={handleDecode} />
+                  <QrScanner
+                    active={cameraOn}
+                    onDecode={handleDecode}
+                    onError={(msg) => {
+                      setMessage(msg);
+                      setCameraOn(false);
+                    }}
+                  />
                   <button
                     onClick={() => setCameraOn(false)}
                     className="tap-target w-full rounded-md border border-fofGunmetal text-fofGunmetal"
