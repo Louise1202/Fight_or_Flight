@@ -36,8 +36,11 @@ export function computeStandings(
     const startTime = effectiveStartTime(team.start_time, wave);
 
     // A heat that hasn't been started by the admin yet is "not started"
-    // regardless of anything else - there's nothing to time.
-    if (!started || scans.length === 0) {
+    // regardless of anything else - there's nothing to time. Once it HAS
+    // started, a team counts as racing immediately - even before their
+    // first scan, since their first leg is a 400m run before they ever
+    // reach Station 1.
+    if (!started) {
       return {
         team,
         status: "not_started" as const,
@@ -50,11 +53,14 @@ export function computeStandings(
     }
 
     const next = getNextAction(scans);
-    const lastScan = [...scans].sort(
-      (a, b) => new Date(b.scanned_at).getTime() - new Date(a.scanned_at).getTime()
-    )[0];
+    const lastScan =
+      scans.length > 0
+        ? [...scans].sort(
+            (a, b) => new Date(b.scanned_at).getTime() - new Date(a.scanned_at).getTime()
+          )[0]
+        : null;
 
-    if (next.isFinished) {
+    if (next.isFinished && lastScan) {
       const splits = buildSplits(scans, startTime);
       const finish = splits.find((s) => s.station === 13);
       const rawMs = finish?.arrivedAt
@@ -77,7 +83,11 @@ export function computeStandings(
       currentStationNumber: next.stationNumber,
       currentStationLabel: next.stationName,
       finalMs: null,
-      lastUpdate: lastScan.scanned_at,
+      // Before the first scan, "last activity" is the heat's own start -
+      // that's what the staleness check on the admin monitor should
+      // measure against (how long since this team began, with nothing
+      // logged yet), rather than having nothing to compare against.
+      lastUpdate: lastScan ? lastScan.scanned_at : startTime,
       startTime,
     };
   });
