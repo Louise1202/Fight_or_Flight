@@ -10,7 +10,7 @@ export default async function AdminPage() {
 
   const admin = createAdminClient();
 
-  const [{ data: teams }, { data: judges }, { data: assignments }, { data: scans }, { data: viewers }] =
+  const [{ data: teams }, { data: judges }, { data: assignments }, { data: scans }, { data: viewers }, { data: waves }] =
     await Promise.all([
       admin.from("teams").select("*").order("id"),
       admin.from("judges").select("id, name").order("name"),
@@ -19,6 +19,7 @@ export default async function AdminPage() {
         .from("scans")
         .select("team_id, station_number, event_type, scanned_at"),
       admin.from("team_viewers").select("team_id"),
+      admin.from("waves").select("wave_number, scheduled_start, actual_start").order("wave_number"),
     ]);
 
   return (
@@ -28,6 +29,7 @@ export default async function AdminPage() {
       assignments={assignments ?? []}
       scans={scans ?? []}
       teamsWithViewer={(viewers ?? []).map((v) => v.team_id)}
+      waves={waves ?? []}
     />
   );
 }

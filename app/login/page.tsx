@@ -51,6 +51,11 @@ function LoginForm() {
     <main className="flex min-h-screen flex-col items-center justify-center px-6">
       <div className="w-full max-w-sm">
         <div className="mb-10 text-center">
+          <img
+            src="/logo.png"
+            alt="Fight or Flight"
+            className="mx-auto mb-4 h-28 w-28 rounded-full"
+          />
           <p className="font-display text-3xl tracking-tight text-fofPaper">
             FIGHT <span className="text-fofRed">OR</span> FLIGHT
           </p>

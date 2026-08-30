@@ -21,6 +21,10 @@ const barlow = Barlow({
 export const metadata: Metadata = {
   title: "Fight or Flight — Race Timing",
   description: "Live race timing for the Fight or Flight team event",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

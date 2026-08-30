@@ -3,20 +3,45 @@
 QR-based live timing for the Fight or Flight team event: 30 teams, 12 stations
 each preceded by a 400m run, one judge following each team the whole way.
 
-## How it works
+## Who sees what
 
-- Each team already has a printed QR code (their team ID, e.g. `FF073001`).
-- Each judge logs in with a **username + password** (no email involved — see
-  "Judge & team logins" below) and sees only the teams assigned to them.
+There are four separate interfaces, each for a different person, all in the
+same phone-friendly web app (no install needed — just a link):
+
+| Who | URL they use | What they see |
+|---|---|---|
+| **A judge** | `/login`, then automatically sent to `/judge` | Their assigned teams, and a scan screen with one big "Scan QR code" button per team |
+| **A team** | `/login`, then automatically sent to `/team/[their team]` | Their own live splits, current station, and final time once finished |
+| **Spectators / a projector** | `/leaderboard` — no login | Every team's live status: finished (ranked), on course (with current station), and not yet started |
+| **You (the organizer)** | `/admin` — single shared password | A "Start Heat" button for each wave, a live monitor of all 30 teams, the full teams table (editable), judge/team account creation, a printable QR code sheet, and an Excel export |
+
+Judges and teams both log in at the same `/login` page with a **username +
+password** — the app automatically figures out which of the two screens to
+send them to, so there's nothing for them to choose.
+
+- Each team already has a printed QR code (their team ID, e.g. `FF073001`) —
+  print a full set any time from **`/admin` → Print QR codes**.
 - On the judge's scan screen, there's one button: **Scan QR code**. The app
   works out on its own whether this scan is an "arrive" or "leave" for the
-  current station, so there's nothing for the judge to select mid-race.
-- Teams log in (also username + password) to watch their own live splits.
-- You (the organizer) manage everything — team details, judge assignments —
-  from `/admin`, gated by a single shared password.
-- `/leaderboard` is a public, no-login spectator screen — put it on a
-  projector or share the link, and it updates automatically every few
-  seconds.
+  current station, so there's nothing for the judge to select mid-race — and
+  the database itself double-checks every scan is actually the correct next
+  one before accepting it.
+- **Nothing is timed until you start it.** Each heat's start time isn't a
+  fixed value — it only becomes real the moment you press **"Start Heat N"**
+  on `/admin`. The instant you do, every judge and team in that heat sees a
+  live ticking race clock appear on their own phone automatically, with
+  nothing for them to refresh or tap. Before that, judges see "Waiting for
+  the admin to start" instead of a scan button, so nothing can get timed
+  early by mistake.
+- Because every team's clock runs from *their own* heat's real start time,
+  a later heat's team overtaking an earlier heat's team on the course never
+  causes a timing mix-up — each team's official time only ever depends on
+  their own start and their own scans, never on who else is nearby.
+- `/admin`'s **Live race monitor** is the "everything happening, right now"
+  view: every team currently on course, who's judging them, their current
+  station, live elapsed time, and how long since their last scan — with a
+  colored dot (green/amber/red) if a team hasn't had a scan in a while, so
+  you notice a stalled phone before anyone else does.
 
 ## 1. Supabase setup
 
@@ -33,12 +58,18 @@ run most of this if you followed along step by step):
 6. `sql/006_scan_validation_trigger.sql` — rejects any scan that doesn't
    match the team's actual next expected station/event, enforced by the
    database itself (not just the app's UI)
+7. `sql/007_waves.sql` — creates the `waves` table (one row per heat) and
+   seeds it with your 4 scheduled times, `actual_start` left blank until
+   race day
 
 Then, in the Supabase dashboard:
 
-- **Database → Replication**: enable Realtime on the `scans` table. This is
-  what makes a team's results page update live as their judge scans, with no
-  page refresh.
+- **Database → Replication**: enable Realtime on both the `scans` table
+  and the `waves` table. Realtime on `scans` is what makes a team's
+  results page update live as their judge scans. Realtime on `waves` is
+  what makes every judge's and team's phone start their clock the
+  instant you press "Start Heat" on `/admin` — without it, they'd still
+  work, just via a slower manual refresh instead of instantly.
 
 ## 2. Judge & team logins (username + password, no email)
 
@@ -100,6 +131,13 @@ npm run dev
 
 ## Notes for race day
 
+- **Starting a heat is one-way in normal use, but reversible if needed**:
+  each "Start Heat N" button becomes an "Undo (mis-click)" link once
+  pressed, in case the wrong heat gets started or it's pressed too early.
+  Undoing just clears the start time — no scans or results are affected.
+- **QR codes**: print the full set any time from `/admin` → **Print QR
+  codes**. It's generated live from your current team list, so if you add
+  or rename a team, just reprint that page — nothing to regenerate by hand.
 - **Offline handling**: if a judge's phone loses signal mid-scan, the scan is
   saved on the phone and synced automatically once connectivity returns — no
   data is lost, no action needed from the judge. This doesn't replace your

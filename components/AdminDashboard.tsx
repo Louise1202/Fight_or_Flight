@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { getNextAction, Scan } from "@/lib/timing";
+import { Wave } from "@/lib/waves";
+import LiveMonitor from "./LiveMonitor";
 
 type Team = {
   id: string;
@@ -22,18 +24,54 @@ export default function AdminDashboard({
   assignments,
   scans,
   teamsWithViewer,
+  waves,
 }: {
   teams: Team[];
   judges: Judge[];
   assignments: Assignment[];
   scans: Scan[];
   teamsWithViewer: string[];
+  waves: Wave[];
 }) {
   const [rows, setRows] = useState<Team[]>(teams);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentList, setAssignmentList] = useState<Assignment[]>(assignments);
   const [newJudgeId, setNewJudgeId] = useState(judges[0]?.id ?? "");
   const [newTeamId, setNewTeamId] = useState("");
+  const [waveList, setWaveList] = useState<Wave[]>(waves);
+  const [waveActionId, setWaveActionId] = useState<number | null>(null);
+
+  async function startWave(waveNumber: number) {
+    setWaveActionId(waveNumber);
+    const res = await fetch("/api/admin/waves", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waveNumber }),
+    });
+    if (res.ok) {
+      setWaveList((prev) =>
+        prev.map((w) =>
+          w.wave_number === waveNumber ? { ...w, actual_start: new Date().toISOString() } : w
+        )
+      );
+    }
+    setWaveActionId(null);
+  }
+
+  async function undoWave(waveNumber: number) {
+    setWaveActionId(waveNumber);
+    const res = await fetch("/api/admin/waves", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waveNumber }),
+    });
+    if (res.ok) {
+      setWaveList((prev) =>
+        prev.map((w) => (w.wave_number === waveNumber ? { ...w, actual_start: null } : w))
+      );
+    }
+    setWaveActionId(null);
+  }
 
   // --- Create judge form state ---
   const [judgeName, setJudgeName] = useState("");
@@ -172,7 +210,7 @@ export default function AdminDashboard({
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-2xl text-fofRed">RACE HQ — ADMIN</h1>
         <a
           href="/api/admin/export"
@@ -180,7 +218,70 @@ export default function AdminDashboard({
         >
           Export to Excel
         </a>
+        <a
+          href="/admin/qr-codes"
+          className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
+        >
+          Print QR codes
+        </a>
       </div>
+
+      <section className="mb-10">
+        <h2 className="mb-2 font-display text-lg">Race day control</h2>
+        <p className="mb-3 text-sm text-fofGunmetal">
+          Nothing is timed until you start a heat here — the moment you do,
+          every judge in that heat sees their clock start on their phone.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {waveList.map((w) => {
+            const started = !!w.actual_start;
+            const scheduled = new Date(w.scheduled_start).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            return (
+              <div
+                key={w.wave_number}
+                className={`rounded border p-4 text-center ${
+                  started ? "border-fofRed" : "border-fofCharcoal"
+                }`}
+              >
+                <p className="font-display text-lg">Heat {w.wave_number}</p>
+                <p className="text-xs text-fofGunmetal">Scheduled {scheduled}</p>
+                {started ? (
+                  <>
+                    <p className="mt-2 text-sm text-fofRed">
+                      Started{" "}
+                      {new Date(w.actual_start!).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </p>
+                    <button
+                      onClick={() => undoWave(w.wave_number)}
+                      disabled={waveActionId === w.wave_number}
+                      className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
+                    >
+                      Undo (mis-click)
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => startWave(w.wave_number)}
+                    disabled={waveActionId === w.wave_number}
+                    className="tap-target mt-3 w-full rounded bg-fofRed font-display disabled:opacity-50"
+                  >
+                    {waveActionId === w.wave_number ? "Starting..." : `Start Heat ${w.wave_number}`}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <LiveMonitor />
 
       <section className="mb-10 overflow-x-auto">
         <h2 className="mb-2 font-display text-lg">Teams</h2>

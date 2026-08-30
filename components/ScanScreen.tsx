@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getNextAction, buildSplits, formatDuration, Scan } from "@/lib/timing";
+import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
 import QrScanner from "./QrScanner";
 
 type Team = {
@@ -12,6 +13,7 @@ type Team = {
   athlete_1: string | null;
   athlete_2: string | null;
   start_time: string;
+  wave: number | null;
 };
 
 type ScanRow = Scan & { id: number };
@@ -29,10 +31,6 @@ function queueKey(teamId: string) {
   return `pending_scans_${teamId}`;
 }
 
-// Every browser Claude targets here supports crypto.randomUUID (all modern
-// mobile browsers). This is what makes a scan safely retryable: if the
-// same client_scan_id is ever submitted twice, the database's unique
-// constraint rejects the second one instead of recording it again.
 function newScanId(): string {
   return crypto.randomUUID();
 }
@@ -41,13 +39,17 @@ export default function ScanScreen({
   team,
   judgeId,
   initialScans,
+  initialWave,
 }: {
   team: Team;
   judgeId: string;
   initialScans: ScanRow[];
+  initialWave: Wave | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
+  const [wave, setWave] = useState<Wave | null>(initialWave);
+  const [now, setNow] = useState(Date.now());
   const [cameraOn, setCameraOn] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -56,8 +58,33 @@ export default function ScanScreen({
   const [penaltyNote, setPenaltyNote] = useState("");
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
 
+  const started = hasWaveStarted(wave);
+  const startTime = effectiveStartTime(team.start_time, wave);
   const next = getNextAction(scans);
-  const splits = buildSplits(scans, team.start_time);
+  const splits = buildSplits(scans, startTime);
+
+  // Live-ticking clock, and live pickup of the admin starting this heat -
+  // both are what make "started" and the on-screen clock actually real
+  // time, not just a snapshot from when the page loaded.
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+
+  useEffect(() => {
+    if (team.wave == null) return;
+    const channel = supabase
+      .channel(`wave-${team.wave}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "waves", filter: `wave_number=eq.${team.wave}` },
+        (payload) => setWave(payload.new as Wave)
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, team.wave]);
 
   const refreshFromServer = useCallback(async () => {
     const { data } = await supabase
@@ -82,10 +109,6 @@ export default function ScanScreen({
     const remaining: PendingScan[] = [];
     for (const item of list) {
       const { error } = await supabase.from("scans").insert(item);
-      // A 23505 (unique violation) here means this exact scan already
-      // made it to the server on an earlier attempt - that's a success,
-      // not a failure, so we drop it from the queue rather than retrying
-      // forever.
       if (error && error.code !== "23505") {
         remaining.push(item);
       }
@@ -126,11 +149,6 @@ export default function ScanScreen({
 
     if (error) {
       if (error.message?.includes("INVALID_SCAN")) {
-        // The database itself rejected this as out-of-sequence - this
-        // should be rare (the UI only ever offers the correct next
-        // action), but if it happens, don't queue it: retrying the same
-        // wrong scan will never succeed. Refresh from the server so the
-        // screen shows the true current state.
         setMessage(
           "That scan doesn't match this team's expected next step. Refreshing..."
         );
@@ -138,8 +156,6 @@ export default function ScanScreen({
         return;
       }
 
-      // Anything else (no network, DNS failure, etc.) - queue it locally
-      // and keep going. The judge shouldn't be blocked by a bad signal.
       const raw = localStorage.getItem(queueKey(team.id));
       const list: PendingScan[] = raw ? JSON.parse(raw) : [];
       list.push(payload);
@@ -182,7 +198,6 @@ export default function ScanScreen({
     if (!last) return;
 
     if (last.id < 0) {
-      // it was only ever local/queued - just drop it
       const raw = localStorage.getItem(queueKey(team.id));
       const list: PendingScan[] = raw ? JSON.parse(raw) : [];
       list.pop();
@@ -230,123 +245,145 @@ export default function ScanScreen({
         {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
       </p>
 
-      {pendingCount > 0 && (
-        <p className="mt-2 rounded-md bg-fofCharcoal px-3 py-2 text-sm text-fofPaper">
-          {pendingCount} scan{pendingCount > 1 ? "s" : ""} waiting to sync
-        </p>
-      )}
+      {!started ? (
+        <section className="mt-6 rounded-lg border-2 border-fofGunmetal p-6 text-center">
+          <p className="text-sm text-fofGunmetal">
+            {wave ? `Heat ${wave.wave_number}` : "This team's heat"} hasn't started yet
+          </p>
+          <p className="mt-2 font-display text-xl">Waiting for the admin to start</p>
+          <p className="mt-2 text-xs text-fofGunmetal">
+            Your clock and scan button appear the instant it starts — no need to
+            refresh.
+          </p>
+        </section>
+      ) : (
+        <>
+          <section className="mt-6 rounded-lg border-2 border-fofRed p-4 text-center">
+            <p className="text-sm text-fofGunmetal">Race clock</p>
+            <p className="font-display text-3xl text-fofRed">
+              {formatDuration(now - new Date(startTime).getTime())}
+            </p>
+          </section>
 
-      <section className="mt-6 rounded-lg border-2 border-fofRed p-4 text-center">
-        <p className="text-sm text-fofGunmetal">Next scan</p>
-        <p className="font-display text-xl text-fofRed">
-          {next.isFinished ? "FINISHED" : next.label}
-        </p>
-      </section>
-
-      {!next.isFinished && (
-        <div className="mt-4 space-y-3">
-          {!cameraOn ? (
-            <button
-              onClick={() => {
-                setMessage(null);
-                setCameraOn(true);
-              }}
-              className="tap-target w-full rounded-md bg-fofRed font-display text-lg"
-            >
-              Scan QR code
-            </button>
-          ) : (
-            <>
-              <QrScanner active={cameraOn} onDecode={handleDecode} />
-              <button
-                onClick={() => setCameraOn(false)}
-                className="tap-target w-full rounded-md border border-fofGunmetal text-fofGunmetal"
-              >
-                Cancel
-              </button>
-            </>
+          {pendingCount > 0 && (
+            <p className="mt-2 rounded-md bg-fofCharcoal px-3 py-2 text-sm text-fofPaper">
+              {pendingCount} scan{pendingCount > 1 ? "s" : ""} waiting to sync
+            </p>
           )}
 
-          <details className="text-sm text-fofGunmetal">
-            <summary>Camera not working? Enter code manually</summary>
-            <div className="mt-2 flex gap-2">
-              <input
-                value={manualCode}
-                onChange={(e) => setManualCode(e.target.value)}
-                placeholder={team.id}
-                className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3 uppercase"
-              />
-              <button
-                onClick={handleManualConfirm}
-                className="tap-target rounded-md border border-fofRed px-4 text-fofRed"
-              >
-                Confirm
-              </button>
+          <section className="mt-4 rounded-lg border-2 border-fofRed p-4 text-center">
+            <p className="text-sm text-fofGunmetal">Next scan</p>
+            <p className="font-display text-xl text-fofRed">
+              {next.isFinished ? "FINISHED" : next.label}
+            </p>
+          </section>
+
+          {!next.isFinished && (
+            <div className="mt-4 space-y-3">
+              {!cameraOn ? (
+                <button
+                  onClick={() => {
+                    setMessage(null);
+                    setCameraOn(true);
+                  }}
+                  className="tap-target w-full rounded-md bg-fofRed font-display text-lg"
+                >
+                  Scan QR code
+                </button>
+              ) : (
+                <>
+                  <QrScanner active={cameraOn} onDecode={handleDecode} />
+                  <button
+                    onClick={() => setCameraOn(false)}
+                    className="tap-target w-full rounded-md border border-fofGunmetal text-fofGunmetal"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              <details className="text-sm text-fofGunmetal">
+                <summary>Camera not working? Enter code manually</summary>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    placeholder={team.id}
+                    className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3 uppercase"
+                  />
+                  <button
+                    onClick={handleManualConfirm}
+                    className="tap-target rounded-md border border-fofRed px-4 text-fofRed"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </details>
             </div>
-          </details>
-        </div>
-      )}
+          )}
 
-      {message && <p className="mt-3 text-sm text-fofRed">{message}</p>}
+          {message && <p className="mt-3 text-sm text-fofRed">{message}</p>}
 
-      <div className="mt-4 flex justify-between text-sm">
-        <button onClick={undoLast} className="text-fofGunmetal underline">
-          Undo last scan
-        </button>
-      </div>
-
-      <section className="mt-8">
-        <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
-          LOG A PENALTY
-        </h2>
-        <form onSubmit={submitPenalty} className="space-y-2">
-          <div className="flex gap-2">
-            <input
-              type="number"
-              inputMode="numeric"
-              placeholder="Seconds"
-              value={penaltySeconds}
-              onChange={(e) => setPenaltySeconds(e.target.value)}
-              className="tap-target w-28 rounded-md border border-fofGunmetal bg-transparent px-3"
-            />
-            <input
-              type="text"
-              placeholder="Reason (optional)"
-              value={penaltyNote}
-              onChange={(e) => setPenaltyNote(e.target.value)}
-              className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3"
-            />
+          <div className="mt-4 flex justify-between text-sm">
+            <button onClick={undoLast} className="text-fofGunmetal underline">
+              Undo last scan
+            </button>
           </div>
-          <button
-            type="submit"
-            className="tap-target w-full rounded-md border border-fofGunmetal font-display"
-          >
-            Log penalty at station {next.stationNumber <= 12 ? next.stationNumber : 12}
-          </button>
-          {penaltyStatus && <p className="text-sm text-fofGunmetal">{penaltyStatus}</p>}
-        </form>
-      </section>
 
-      <section className="mt-8">
-        <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
-          PROGRESS
-        </h2>
-        <ul className="space-y-1 text-sm">
-          {splits
-            .filter((s) => s.arrivedAt)
-            .map((s) => (
-              <li key={s.station} className="flex justify-between border-b border-fofCharcoal py-1">
-                <span>
-                  {s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}
-                </span>
-                <span className="text-fofGunmetal">
-                  {s.runMs != null && `run ${formatDuration(s.runMs)}`}
-                  {s.stationMs != null && ` · station ${formatDuration(s.stationMs)}`}
-                </span>
-              </li>
-            ))}
-        </ul>
-      </section>
+          <section className="mt-8">
+            <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
+              LOG A PENALTY
+            </h2>
+            <form onSubmit={submitPenalty} className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Seconds"
+                  value={penaltySeconds}
+                  onChange={(e) => setPenaltySeconds(e.target.value)}
+                  className="tap-target w-28 rounded-md border border-fofGunmetal bg-transparent px-3"
+                />
+                <input
+                  type="text"
+                  placeholder="Reason (optional)"
+                  value={penaltyNote}
+                  onChange={(e) => setPenaltyNote(e.target.value)}
+                  className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3"
+                />
+              </div>
+              <button
+                type="submit"
+                className="tap-target w-full rounded-md border border-fofGunmetal font-display"
+              >
+                Log penalty at station {next.stationNumber <= 12 ? next.stationNumber : 12}
+              </button>
+              {penaltyStatus && <p className="text-sm text-fofGunmetal">{penaltyStatus}</p>}
+            </form>
+          </section>
+
+          <section className="mt-8">
+            <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
+              PROGRESS
+            </h2>
+            <ul className="space-y-1 text-sm">
+              {splits
+                .filter((s) => s.arrivedAt)
+                .map((s) => (
+                  <li key={s.station} className="flex justify-between border-b border-fofCharcoal py-1">
+                    <span>
+                      {s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}
+                    </span>
+                    <span className="text-fofGunmetal">
+                      {s.runMs != null && `run ${formatDuration(s.runMs)}`}
+                      {s.stationMs != null && ` · station ${formatDuration(s.stationMs)}`}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        </>
+      )}
     </main>
   );
 }

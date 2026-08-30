@@ -42,6 +42,11 @@ export default function LeaderboardBoard({
   return (
     <main className="min-h-screen px-6 py-8">
       <header className="mb-8 text-center">
+        <img
+          src="/logo.png"
+          alt="Fight or Flight"
+          className="mx-auto mb-3 h-20 w-20 rounded-full"
+        />
         <p className="font-display text-4xl tracking-wide">
           FIGHT <span className="text-fofRed">OR</span> FLIGHT
         </p>
@@ -83,7 +88,7 @@ export default function LeaderboardBoard({
           ) : (
             <ul className="space-y-1">
               {inProgress.map((s) => {
-                const elapsed = now - new Date(s.team.start_time).getTime();
+                const elapsed = s.startTime ? now - new Date(s.startTime).getTime() : 0;
                 return (
                   <li
                     key={s.team.id}

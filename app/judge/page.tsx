@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getNextAction } from "@/lib/timing";
+import { hasWaveStarted, Wave } from "@/lib/waves";
 import LogoutButton from "@/components/LogoutButton";
 
 export const dynamic = "force-dynamic";
@@ -23,17 +24,22 @@ export default async function JudgeHome() {
 
   const { data: assignments } = await supabase
     .from("judge_team_assignments")
-    .select("team_id, teams(id, team_name, athlete_1, athlete_2)")
+    .select("team_id, teams(id, team_name, athlete_1, athlete_2, wave)")
     .eq("judge_id", judge.id);
 
   const teamIds = (assignments ?? []).map((a) => a.team_id);
 
-  const { data: allScans } = teamIds.length
-    ? await supabase
-        .from("scans")
-        .select("team_id, station_number, event_type, scanned_at")
-        .in("team_id", teamIds)
-    : { data: [] as any[] };
+  const [{ data: allScans }, { data: waves }] = await Promise.all([
+    teamIds.length
+      ? supabase
+          .from("scans")
+          .select("team_id, station_number, event_type, scanned_at")
+          .in("team_id", teamIds)
+      : Promise.resolve({ data: [] as any[] }),
+    supabase.from("waves").select("wave_number, scheduled_start, actual_start"),
+  ]);
+
+  const waveByNumber = new Map<number, Wave>((waves ?? []).map((w) => [w.wave_number, w as Wave]));
 
   return (
     <main className="mx-auto max-w-md px-4 py-8">
@@ -54,6 +60,8 @@ export default async function JudgeHome() {
           const team = a.teams;
           const teamScans = (allScans ?? []).filter((s) => s.team_id === team.id);
           const next = getNextAction(teamScans);
+          const wave = team.wave != null ? waveByNumber.get(team.wave) : undefined;
+          const started = hasWaveStarted(wave);
           return (
             <li key={team.id}>
               <Link
@@ -66,7 +74,11 @@ export default async function JudgeHome() {
                   {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
                 </span>
                 <span className="mt-1 text-sm text-fofRed">
-                  {next.isFinished ? "Finished" : `Next: ${next.label}`}
+                  {!started
+                    ? `Waiting for Heat ${team.wave} to start`
+                    : next.isFinished
+                    ? "Finished"
+                    : `Next: ${next.label}`}
                 </span>
               </Link>
             </li>

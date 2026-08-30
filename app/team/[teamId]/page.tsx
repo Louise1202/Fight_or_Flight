@@ -24,27 +24,36 @@ export default async function TeamPage({
 
   const { data: team } = await supabase
     .from("teams")
-    .select("id, team_name, athlete_1, athlete_2, start_time")
+    .select("id, team_name, athlete_1, athlete_2, start_time, wave")
     .eq("id", params.teamId)
     .maybeSingle();
   if (!team) notFound();
 
-  const { data: scans } = await supabase
-    .from("scans")
-    .select("id, station_number, event_type, scanned_at")
-    .eq("team_id", team.id)
-    .order("scanned_at", { ascending: true });
-
-  const { data: penalties } = await supabase
-    .from("penalties")
-    .select("station_number, penalty_seconds, notes")
-    .eq("team_id", team.id);
+  const [{ data: scans }, { data: penalties }, { data: wave }] = await Promise.all([
+    supabase
+      .from("scans")
+      .select("id, station_number, event_type, scanned_at")
+      .eq("team_id", team.id)
+      .order("scanned_at", { ascending: true }),
+    supabase
+      .from("penalties")
+      .select("station_number, penalty_seconds, notes")
+      .eq("team_id", team.id),
+    team.wave != null
+      ? supabase
+          .from("waves")
+          .select("wave_number, scheduled_start, actual_start")
+          .eq("wave_number", team.wave)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
 
   return (
     <TeamResults
       team={team}
       initialScans={scans ?? []}
       penalties={penalties ?? []}
+      initialWave={wave ?? null}
     />
   );
 }

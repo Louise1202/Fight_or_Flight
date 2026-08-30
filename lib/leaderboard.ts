@@ -1,4 +1,5 @@
 import { buildSplits, getNextAction, Scan } from "./timing";
+import { effectiveStartTime, hasWaveStarted, Wave } from "./waves";
 
 export type TeamRow = {
   id: string;
@@ -15,25 +16,36 @@ export type Standing = {
   currentStationLabel: string;
   finalMs: number | null;
   lastUpdate: string | null;
+  /** The real start time this team's clock actually runs from (wave's
+   * actual_start once the admin has started that heat) - null if the
+   * heat hasn't started yet, so there's nothing to count from. */
+  startTime: string | null;
 };
 
 export function computeStandings(
   teams: TeamRow[],
   scansByTeam: Record<string, Scan[]>,
-  penaltySecondsByTeam: Record<string, number>
+  penaltySecondsByTeam: Record<string, number>,
+  wavesByNumber: Record<number, Wave> = {}
 ): Standing[] {
   const standings: Standing[] = teams.map((team) => {
     const scans = scansByTeam[team.id] ?? [];
     const penaltySeconds = penaltySecondsByTeam[team.id] ?? 0;
+    const wave = team.wave != null ? wavesByNumber[team.wave] : undefined;
+    const started = hasWaveStarted(wave);
+    const startTime = effectiveStartTime(team.start_time, wave);
 
-    if (scans.length === 0) {
+    // A heat that hasn't been started by the admin yet is "not started"
+    // regardless of anything else - there's nothing to time.
+    if (!started || scans.length === 0) {
       return {
         team,
-        status: "not_started",
+        status: "not_started" as const,
         currentStationNumber: 0,
         currentStationLabel: "Not started",
         finalMs: null,
         lastUpdate: null,
+        startTime: null,
       };
     }
 
@@ -43,10 +55,10 @@ export function computeStandings(
     )[0];
 
     if (next.isFinished) {
-      const splits = buildSplits(scans, team.start_time);
+      const splits = buildSplits(scans, startTime);
       const finish = splits.find((s) => s.station === 13);
       const rawMs = finish?.arrivedAt
-        ? new Date(finish.arrivedAt).getTime() - new Date(team.start_time).getTime()
+        ? new Date(finish.arrivedAt).getTime() - new Date(startTime).getTime()
         : null;
       return {
         team,
@@ -55,6 +67,7 @@ export function computeStandings(
         currentStationLabel: "Finished",
         finalMs: rawMs != null ? rawMs + penaltySeconds * 1000 : null,
         lastUpdate: lastScan.scanned_at,
+        startTime,
       };
     }
 
@@ -65,6 +78,7 @@ export function computeStandings(
       currentStationLabel: next.stationName,
       finalMs: null,
       lastUpdate: lastScan.scanned_at,
+      startTime,
     };
   });
 
@@ -83,9 +97,13 @@ export function computeStandings(
 
   const notStarted = standings
     .filter((s) => s.status === "not_started")
-    .sort(
-      (a, b) => new Date(a.team.start_time).getTime() - new Date(b.team.start_time).getTime()
-    );
+    .sort((a, b) => {
+      const waveA = a.team.wave != null ? wavesByNumber[a.team.wave] : undefined;
+      const waveB = b.team.wave != null ? wavesByNumber[b.team.wave] : undefined;
+      const timeA = new Date(effectiveStartTime(a.team.start_time, waveA)).getTime();
+      const timeB = new Date(effectiveStartTime(b.team.start_time, waveB)).getTime();
+      return timeA - timeB;
+    });
 
   return [...finished, ...inProgress, ...notStarted];
 }

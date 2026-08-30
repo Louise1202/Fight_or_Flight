@@ -15,13 +15,14 @@ export async function GET() {
 
   const admin = createAdminClient();
 
-  const [{ data: teams }, { data: scans }, { data: penalties }, { data: judges }, { data: assignments }] =
+  const [{ data: teams }, { data: scans }, { data: penalties }, { data: judges }, { data: assignments }, { data: waves }] =
     await Promise.all([
       admin.from("teams").select("*").order("id"),
       admin.from("scans").select("*").order("scanned_at"),
       admin.from("penalties").select("*").order("created_at"),
       admin.from("judges").select("id, name"),
       admin.from("judge_team_assignments").select("judge_id, team_id"),
+      admin.from("waves").select("wave_number, scheduled_start, actual_start"),
     ]);
 
   const judgeNameById = new Map((judges ?? []).map((j) => [j.id, j.name]));
@@ -42,7 +43,17 @@ export async function GET() {
     penaltySecondsByTeam[p.team_id] = (penaltySecondsByTeam[p.team_id] ?? 0) + p.penalty_seconds;
   }
 
-  const standings = computeStandings((teams ?? []) as TeamRow[], scansByTeam, penaltySecondsByTeam);
+  const wavesByNumber: Record<number, import("@/lib/waves").Wave> = {};
+  for (const w of waves ?? []) {
+    wavesByNumber[w.wave_number] = w as any;
+  }
+
+  const standings = computeStandings(
+    (teams ?? []) as TeamRow[],
+    scansByTeam,
+    penaltySecondsByTeam,
+    wavesByNumber
+  );
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Fight or Flight Race Timing";
@@ -134,6 +145,22 @@ export async function GET() {
     });
   }
   penaltiesSheet.getRow(1).font = { bold: true };
+
+  // --- Waves sheet (scheduled vs actual start) ---
+  const wavesSheet = workbook.addWorksheet("Waves");
+  wavesSheet.columns = [
+    { header: "Wave", key: "wave_number", width: 8 },
+    { header: "Scheduled Start", key: "scheduled_start", width: 24 },
+    { header: "Actual Start", key: "actual_start", width: 24 },
+  ];
+  for (const w of waves ?? []) {
+    wavesSheet.addRow({
+      wave_number: w.wave_number,
+      scheduled_start: w.scheduled_start,
+      actual_start: w.actual_start ?? "(not started)",
+    });
+  }
+  wavesSheet.getRow(1).font = { bold: true };
 
   const buffer = await workbook.xlsx.writeBuffer();
   const filename = `fight-or-flight-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
