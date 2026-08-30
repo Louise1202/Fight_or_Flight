@@ -13,7 +13,7 @@ same phone-friendly web app (no install needed — just a link):
 | **A judge** | `/login`, then automatically sent to `/judge` | Their assigned teams, and a scan screen with one big "Scan QR code" button per team |
 | **A team** | `/login`, then automatically sent to `/team/[their team]` | Their own live splits, current station, and final time once finished |
 | **Spectators / a projector** | `/leaderboard` — no login | Every team's live status: finished (ranked), on course (with current station), and not yet started |
-| **You (the organizer)** | `/admin` — single shared password | A "Start Heat" button for each wave, a live monitor of all 30 teams, the full teams table (editable), judge/team account creation, a printable QR code sheet, and an Excel export |
+| **You (the organizer)** | `/admin` — single shared password | A "Start Heat" button for each heat, a live monitor of all 30 teams, the full teams table (editable), judge/team account creation, a printable QR code sheet, and an Excel export |
 
 Judges and teams both log in at the same `/login` page with a **username +
 password** — the app automatically figures out which of the two screens to
@@ -61,6 +61,11 @@ run most of this if you followed along step by step):
 7. `sql/007_waves.sql` — creates the `waves` table (one row per heat) and
    seeds it with your 4 scheduled times, `actual_start` left blank until
    race day
+8. `sql/008_heat_auto_close.sql` — adds `actual_end` to each heat and a
+   trigger that automatically stamps it the moment every team in that
+   heat has crossed the finish line
+9. `sql/009_fix_divisions.sql` — fixes the seeded division labels
+   (`Mens`/`Womans`) to `Men`/`Women`
 
 Then, in the Supabase dashboard:
 
@@ -131,10 +136,18 @@ npm run dev
 
 ## Notes for race day
 
-- **Starting a heat is one-way in normal use, but reversible if needed**:
-  each "Start Heat N" button becomes an "Undo (mis-click)" link once
-  pressed, in case the wrong heat gets started or it's pressed too early.
-  Undoing just clears the start time — no scans or results are affected.
+- **Starting a heat is reversible**: each "Start Heat N" button becomes an
+  "Undo start (mis-click)" link once pressed, in case the wrong heat gets
+  started or it's pressed too early. Undoing just clears the start time —
+  no scans or results are affected.
+- **Heats close themselves automatically** — the moment the last team in
+  a heat crosses the finish line, that heat is marked finished with no
+  action from you. **Important limitation**: this can only fire if every
+  single team in the heat actually finishes. If a team DNFs, withdraws,
+  or otherwise will never cross the line, that heat will sit "in
+  progress" forever waiting for a team that isn't coming — use the
+  **"End heat"** button in that case to close it manually. There's also
+  a "Reopen heat" link if a heat gets closed by mistake.
 - **QR codes**: print the full set any time from `/admin` → **Print QR
   codes**. It's generated live from your current team list, so if you add
   or rename a team, just reprint that page — nothing to regenerate by hand.

@@ -19,7 +19,7 @@ export default async function AdminPage() {
         .from("scans")
         .select("team_id, station_number, event_type, scanned_at"),
       admin.from("team_viewers").select("team_id"),
-      admin.from("waves").select("wave_number, scheduled_start, actual_start").order("wave_number"),
+      admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end").order("wave_number"),
     ]);
 
   return (

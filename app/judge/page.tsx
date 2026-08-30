@@ -36,7 +36,7 @@ export default async function JudgeHome() {
           .select("team_id, station_number, event_type, scanned_at")
           .in("team_id", teamIds)
       : Promise.resolve({ data: [] as any[] }),
-    supabase.from("waves").select("wave_number, scheduled_start, actual_start"),
+    supabase.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
   ]);
 
   const waveByNumber = new Map<number, Wave>((waves ?? []).map((w) => [w.wave_number, w as Wave]));

@@ -19,7 +19,7 @@ export async function GET() {
       admin.from("penalties").select("team_id, penalty_seconds"),
       admin.from("judges").select("id, name"),
       admin.from("judge_team_assignments").select("judge_id, team_id"),
-      admin.from("waves").select("wave_number, scheduled_start, actual_start"),
+      admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
     ]);
 
   const judgeNameById = new Map((judges ?? []).map((j) => [j.id, j.name]));

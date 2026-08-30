@@ -22,7 +22,7 @@ export async function GET() {
       admin.from("penalties").select("*").order("created_at"),
       admin.from("judges").select("id, name"),
       admin.from("judge_team_assignments").select("judge_id, team_id"),
-      admin.from("waves").select("wave_number, scheduled_start, actual_start"),
+      admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
     ]);
 
   const judgeNameById = new Map((judges ?? []).map((j) => [j.id, j.name]));
@@ -92,7 +92,7 @@ export async function GET() {
     { header: "Athlete 1", key: "athlete_1", width: 20 },
     { header: "Athlete 2", key: "athlete_2", width: 20 },
     { header: "Division", key: "division", width: 12 },
-    { header: "Wave", key: "wave", width: 8 },
+    { header: "Heat", key: "wave", width: 8 },
     { header: "Start Time", key: "start_time", width: 22 },
     { header: "Judge(s)", key: "judges", width: 24 },
   ];
@@ -146,18 +146,20 @@ export async function GET() {
   }
   penaltiesSheet.getRow(1).font = { bold: true };
 
-  // --- Waves sheet (scheduled vs actual start) ---
-  const wavesSheet = workbook.addWorksheet("Waves");
+  // --- Heats sheet (scheduled vs actual start/end) ---
+  const wavesSheet = workbook.addWorksheet("Heats");
   wavesSheet.columns = [
-    { header: "Wave", key: "wave_number", width: 8 },
+    { header: "Heat", key: "wave_number", width: 8 },
     { header: "Scheduled Start", key: "scheduled_start", width: 24 },
     { header: "Actual Start", key: "actual_start", width: 24 },
+    { header: "Actual End", key: "actual_end", width: 24 },
   ];
   for (const w of waves ?? []) {
     wavesSheet.addRow({
       wave_number: w.wave_number,
       scheduled_start: w.scheduled_start,
       actual_start: w.actual_start ?? "(not started)",
+      actual_end: w.actual_end ?? (w.actual_start ? "(in progress)" : ""),
     });
   }
   wavesSheet.getRow(1).font = { bold: true };

@@ -2,6 +2,7 @@ export type Wave = {
   wave_number: number;
   scheduled_start: string;
   actual_start: string | null;
+  actual_end: string | null;
 };
 
 /**
@@ -22,4 +23,10 @@ export function effectiveStartTime(
 /** Whether this team's heat has actually been started by the admin yet. */
 export function hasWaveStarted(wave: Wave | null | undefined): boolean {
   return !!wave?.actual_start;
+}
+
+/** Whether every team in this heat has finished (auto-detected, or the
+ * admin manually closed it as a fallback for a DNF/withdrawal). */
+export function hasWaveEnded(wave: Wave | null | undefined): boolean {
+  return !!wave?.actual_end;
 }

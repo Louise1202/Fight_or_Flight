@@ -42,7 +42,7 @@ export default function AdminDashboard({
   const [waveList, setWaveList] = useState<Wave[]>(waves);
   const [waveActionId, setWaveActionId] = useState<number | null>(null);
 
-  async function startWave(waveNumber: number) {
+  async function startHeat(waveNumber: number) {
     setWaveActionId(waveNumber);
     const res = await fetch("/api/admin/waves", {
       method: "POST",
@@ -59,16 +59,37 @@ export default function AdminDashboard({
     setWaveActionId(null);
   }
 
-  async function undoWave(waveNumber: number) {
+  async function endHeat(waveNumber: number) {
     setWaveActionId(waveNumber);
     const res = await fetch("/api/admin/waves", {
-      method: "DELETE",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ waveNumber }),
     });
     if (res.ok) {
       setWaveList((prev) =>
-        prev.map((w) => (w.wave_number === waveNumber ? { ...w, actual_start: null } : w))
+        prev.map((w) =>
+          w.wave_number === waveNumber ? { ...w, actual_end: new Date().toISOString() } : w
+        )
+      );
+    }
+    setWaveActionId(null);
+  }
+
+  async function undoHeat(waveNumber: number, field: "start" | "end") {
+    setWaveActionId(waveNumber);
+    const res = await fetch("/api/admin/waves", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waveNumber, field }),
+    });
+    if (res.ok) {
+      setWaveList((prev) =>
+        prev.map((w) =>
+          w.wave_number === waveNumber
+            ? { ...w, [field === "end" ? "actual_end" : "actual_start"]: null }
+            : w
+        )
       );
     }
     setWaveActionId(null);
@@ -241,24 +262,40 @@ export default function AdminDashboard({
         <p className="mb-3 text-sm text-fofGunmetal">
           Nothing is timed until you start a heat here — the moment you do,
           every judge in that heat sees their clock start on their phone.
+          A heat closes itself automatically once every team in it has
+          finished; use "End heat" only if a team DNFs and will never cross
+          the line.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {waveList.map((w) => {
             const started = !!w.actual_start;
+            const ended = !!w.actual_end;
             const scheduled = new Date(w.scheduled_start).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             });
+            const busy = waveActionId === w.wave_number;
             return (
               <div
                 key={w.wave_number}
                 className={`rounded border p-4 text-center ${
-                  started ? "border-fofRed" : "border-fofCharcoal"
+                  ended ? "border-fofGunmetal" : started ? "border-fofRed" : "border-fofCharcoal"
                 }`}
               >
                 <p className="font-display text-lg">Heat {w.wave_number}</p>
                 <p className="text-xs text-fofGunmetal">Scheduled {scheduled}</p>
-                {started ? (
+
+                {!started && (
+                  <button
+                    onClick={() => startHeat(w.wave_number)}
+                    disabled={busy}
+                    className="tap-target mt-3 w-full rounded bg-fofRed font-display disabled:opacity-50"
+                  >
+                    {busy ? "Starting..." : `Start Heat ${w.wave_number}`}
+                  </button>
+                )}
+
+                {started && !ended && (
                   <>
                     <p className="mt-2 text-sm text-fofRed">
                       Started{" "}
@@ -269,21 +306,47 @@ export default function AdminDashboard({
                       })}
                     </p>
                     <button
-                      onClick={() => undoWave(w.wave_number)}
-                      disabled={waveActionId === w.wave_number}
+                      onClick={() => endHeat(w.wave_number)}
+                      disabled={busy}
+                      className="tap-target mt-3 w-full rounded border border-fofGunmetal font-display disabled:opacity-50"
+                    >
+                      {busy ? "Ending..." : "End heat"}
+                    </button>
+                    <button
+                      onClick={() => undoHeat(w.wave_number, "start")}
+                      disabled={busy}
                       className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
                     >
-                      Undo (mis-click)
+                      Undo start (mis-click)
                     </button>
                   </>
-                ) : (
-                  <button
-                    onClick={() => startWave(w.wave_number)}
-                    disabled={waveActionId === w.wave_number}
-                    className="tap-target mt-3 w-full rounded bg-fofRed font-display disabled:opacity-50"
-                  >
-                    {waveActionId === w.wave_number ? "Starting..." : `Start Heat ${w.wave_number}`}
-                  </button>
+                )}
+
+                {ended && (
+                  <>
+                    <p className="mt-2 text-xs text-fofGunmetal">
+                      Started{" "}
+                      {new Date(w.actual_start!).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                    <p className="text-sm text-fofGunmetal">
+                      Finished{" "}
+                      {new Date(w.actual_end!).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </p>
+                    <button
+                      onClick={() => undoHeat(w.wave_number, "end")}
+                      disabled={busy}
+                      className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
+                    >
+                      Reopen heat
+                    </button>
+                  </>
                 )}
               </div>
             );
@@ -303,7 +366,7 @@ export default function AdminDashboard({
               <th className="p-2">Athlete 1</th>
               <th className="p-2">Athlete 2</th>
               <th className="p-2">Division</th>
-              <th className="p-2">Wave</th>
+              <th className="p-2">Heat</th>
               <th className="p-2">Progress</th>
               <th className="p-2">Viewer login</th>
               <th className="p-2"></th>
@@ -339,11 +402,16 @@ export default function AdminDashboard({
                     />
                   </td>
                   <td className="p-2">
-                    <input
+                    <select
                       value={team.division ?? ""}
                       onChange={(e) => updateField(team.id, "division", e.target.value)}
-                      className="w-24 border-b border-transparent bg-transparent focus:border-fofRed"
-                    />
+                      className="border-b border-transparent bg-transparent focus:border-fofRed"
+                    >
+                      <option value="" className="bg-fofBlack" />
+                      <option value="Men" className="bg-fofBlack">Men</option>
+                      <option value="Women" className="bg-fofBlack">Women</option>
+                      <option value="Mixed" className="bg-fofBlack">Mixed</option>
+                    </select>
                   </td>
                   <td className="p-2">
                     <input

@@ -15,7 +15,7 @@ export async function GET() {
     admin.from("teams").select("id, team_name, division, wave, start_time"),
     admin.from("scans").select("team_id, station_number, event_type, scanned_at"),
     admin.from("penalties").select("team_id, penalty_seconds"),
-    admin.from("waves").select("wave_number, scheduled_start, actual_start"),
+    admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
   ]);
 
   const scansByTeam: Record<string, Scan[]> = {};

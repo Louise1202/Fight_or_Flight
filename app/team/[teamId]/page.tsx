@@ -42,7 +42,7 @@ export default async function TeamPage({
     team.wave != null
       ? supabase
           .from("waves")
-          .select("wave_number, scheduled_start, actual_start")
+          .select("wave_number, scheduled_start, actual_start, actual_end")
           .eq("wave_number", team.wave)
           .maybeSingle()
       : Promise.resolve({ data: null }),
