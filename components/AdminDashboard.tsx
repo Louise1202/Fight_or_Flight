@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { getNextAction, Scan } from "@/lib/timing";
+import { useEffect, useState } from "react";
+import { formatDuration, getNextAction, Scan } from "@/lib/timing";
 import { Wave } from "@/lib/waves";
 import LiveMonitor from "./LiveMonitor";
 import PasswordInput from "./PasswordInput";
@@ -40,6 +40,12 @@ export default function AdminDashboard({
   const [newJudgeId, setNewJudgeId] = useState(judges[0]?.id ?? "");
   const [newTeamId, setNewTeamId] = useState("");
   const [waveList, setWaveList] = useState<Wave[]>(waves);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
   const [waveActionId, setWaveActionId] = useState<number | null>(null);
 
   async function startHeat(waveNumber: number) {
@@ -305,6 +311,10 @@ export default function AdminDashboard({
                         second: "2-digit",
                       })}
                     </p>
+                    <p className="font-display text-lg">
+                      {formatDuration(now - new Date(w.actual_start!).getTime())}
+                    </p>
+                    <p className="text-xs text-fofGunmetal">running</p>
                     <button
                       onClick={() => endHeat(w.wave_number)}
                       disabled={busy}
@@ -339,6 +349,12 @@ export default function AdminDashboard({
                         second: "2-digit",
                       })}
                     </p>
+                    <p className="font-display text-lg">
+                      {formatDuration(
+                        new Date(w.actual_end!).getTime() - new Date(w.actual_start!).getTime()
+                      )}
+                    </p>
+                    <p className="text-xs text-fofGunmetal">total duration</p>
                     <button
                       onClick={() => undoHeat(w.wave_number, "end")}
                       disabled={busy}

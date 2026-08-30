@@ -123,6 +123,31 @@ export default function ScanScreen({
 
   useEffect(() => {
     refreshPendingCount();
+    // Merge any scans still sitting in the local queue into what's shown
+    // on screen. Without this, a scan that's queued-but-not-yet-synced
+    // becomes invisible to "Next scan" and "Progress" the moment the
+    // page reloads (its data lives in localStorage, not in the scans
+    // fetched from the server) - the banner would say "waiting to sync"
+    // while the rest of the screen quietly forgot it happened.
+    const raw = localStorage.getItem(queueKey(team.id));
+    const queued: PendingScan[] = raw ? JSON.parse(raw) : [];
+    if (queued.length > 0) {
+      setScans((prev) => {
+        const existingIds = new Set(prev.map((s) => (s as any).client_scan_id));
+        const toAdd = queued
+          .filter((q) => !existingIds.has(q.client_scan_id))
+          .map((q, i) => ({
+            id: -Date.now() - i,
+            client_scan_id: q.client_scan_id,
+            station_number: q.station_number,
+            event_type: q.event_type,
+            scanned_at: q.queued_at,
+          }));
+        return [...prev, ...toAdd].sort(
+          (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
+        );
+      });
+    }
     window.addEventListener("online", flushQueue);
     const interval = setInterval(flushQueue, 15000);
     return () => {
