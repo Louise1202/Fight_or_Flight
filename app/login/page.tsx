@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { usernameToEmail } from "@/lib/username";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function LoginPage() {
   return (
@@ -83,13 +84,11 @@ function LoginForm() {
             <label htmlFor="password" className="mb-1 block text-sm">
               Password
             </label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="tap-target w-full rounded-md border border-fofGunmetal bg-transparent px-4 text-lg text-fofPaper"
+              onChange={setPassword}
             />
           </div>
 

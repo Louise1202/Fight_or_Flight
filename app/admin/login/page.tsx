@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -35,12 +36,11 @@ export default function AdminLoginPage() {
     <main className="flex min-h-screen flex-col items-center justify-center px-6">
       <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-4">
         <p className="text-center font-display text-xl">Admin access</p>
-        <input
-          type="password"
+        <PasswordInput
           placeholder="Admin password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="tap-target w-full rounded-md border border-fofGunmetal bg-transparent px-4"
+          onChange={setPassword}
+          className="tap-target w-full rounded-md border border-fofGunmetal bg-transparent px-4 pr-12"
           autoFocus
         />
         {error && <p className="text-sm text-fofRed">{error}</p>}

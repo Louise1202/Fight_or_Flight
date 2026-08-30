@@ -4,6 +4,7 @@ import { useState } from "react";
 import { getNextAction, Scan } from "@/lib/timing";
 import { Wave } from "@/lib/waves";
 import LiveMonitor from "./LiveMonitor";
+import PasswordInput from "./PasswordInput";
 
 type Team = {
   id: string;
@@ -224,6 +225,15 @@ export default function AdminDashboard({
         >
           Print QR codes
         </a>
+        <button
+          onClick={async () => {
+            await fetch("/api/admin/logout", { method: "POST" });
+            window.location.href = "/admin/login";
+          }}
+          className="rounded border border-fofGunmetal px-3 py-2 text-sm text-fofGunmetal hover:border-fofRed hover:text-fofRed"
+        >
+          Sign out
+        </button>
       </div>
 
       <section className="mb-10">
@@ -386,14 +396,13 @@ export default function AdminDashboard({
               required
               className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
             />
-            <input
-              type="text"
+            <PasswordInput
               placeholder="Password (min 6 characters)"
               value={judgePassword}
-              onChange={(e) => setJudgePassword(e.target.value)}
+              onChange={setJudgePassword}
               required
               minLength={6}
-              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3 pr-12"
             />
             <div className="max-h-36 overflow-y-auto rounded border border-fofCharcoal p-2 text-sm">
               <p className="mb-1 text-fofGunmetal">Assign teams (optional, can add later):</p>
@@ -442,14 +451,13 @@ export default function AdminDashboard({
               required
               className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
             />
-            <input
-              type="text"
+            <PasswordInput
               placeholder="Password (min 6 characters)"
               value={viewerPassword}
-              onChange={(e) => setViewerPassword(e.target.value)}
+              onChange={setViewerPassword}
               required
               minLength={6}
-              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+              className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3 pr-12"
             />
             <button
               type="submit"
