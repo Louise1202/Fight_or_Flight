@@ -8,14 +8,39 @@
 
 html,
 body {
-  background-color: #0c0c0c;
-  color: #f2f2f2;
+  background-color: #0e0d0c;
+  color: #f4f1ea;
+}
+
+/* Worn-patch ground: grain + crossed twill weave + one cold red glow off
+   the top edge. All static background layers - no repaint, no battery cost. */
+.ground {
+  background-color: #0e0d0c;
+  background-image:
+    url("/texture/grain.svg"),
+    repeating-linear-gradient(135deg, rgba(244, 241, 234, 0.028) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(45deg, rgba(244, 241, 234, 0.018) 0 1px, transparent 1px 5px),
+    radial-gradient(120% 90% at 50% -10%, rgba(232, 38, 45, 0.1), transparent 62%);
+  background-blend-mode: overlay, normal, normal, normal;
+  background-attachment: fixed;
+}
+
+/* Stitch line - the patch's thread, used sparingly as a divider. */
+.stitch {
+  border-top: 1px dashed #2a2724;
+}
+
+/* Every time, split, count and position uses this: columns stay aligned
+   and digits don't jitter while a clock is running. */
+.nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Visible keyboard focus everywhere - judges are on phones, but
    this also matters for anyone using the admin dashboard on a laptop. */
 :focus-visible {
-  outline: 3px solid #d71920;
+  outline: 3px solid #e8262d;
   outline-offset: 2px;
 }
 
