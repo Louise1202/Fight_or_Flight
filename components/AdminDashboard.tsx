@@ -138,6 +138,39 @@ export default function AdminDashboard({
     setWaveActionId(null);
   }
 
+  const [editingScheduleFor, setEditingScheduleFor] = useState<number | null>(null);
+  const [scheduleTimeInput, setScheduleTimeInput] = useState("");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  function startEditSchedule(wave: Wave) {
+    const d = new Date(wave.scheduled_start);
+    setScheduleTimeInput(
+      `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+    );
+    setEditingScheduleFor(wave.wave_number);
+  }
+
+  async function saveSchedule(waveNumber: number) {
+    setScheduleSaving(true);
+    const res = await fetch("/api/admin/waves", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waveNumber, time: scheduleTimeInput }),
+    });
+    const data = await res.json();
+    setScheduleSaving(false);
+    if (res.ok) {
+      setWaveList((prev) =>
+        prev.map((w) =>
+          w.wave_number === waveNumber ? { ...w, scheduled_start: data.scheduled_start } : w
+        )
+      );
+      setEditingScheduleFor(null);
+    } else {
+      window.alert(data.error ?? "Couldn't save the new time.");
+    }
+  }
+
   async function undoHeat(waveNumber: number, field: "start" | "end") {
     if (field === "start") {
       const teamIdsInHeat = teams.filter((t) => t.wave === waveNumber).map((t) => t.id);
@@ -461,7 +494,43 @@ export default function AdminDashboard({
                 }`}
               >
                 <p className="font-display text-lg">Heat {w.wave_number}</p>
-                <p className="text-xs text-fofGunmetal">Scheduled {scheduled}</p>
+
+                {editingScheduleFor === w.wave_number ? (
+                  <div className="mt-1 flex items-center justify-center gap-1">
+                    <input
+                      type="time"
+                      value={scheduleTimeInput}
+                      onChange={(e) => setScheduleTimeInput(e.target.value)}
+                      className="rounded border border-fofGunmetal bg-transparent px-1 py-0.5 text-xs"
+                    />
+                    <button
+                      onClick={() => saveSchedule(w.wave_number)}
+                      disabled={scheduleSaving}
+                      className="text-xs text-fofRed underline disabled:opacity-50"
+                    >
+                      {scheduleSaving ? "..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingScheduleFor(null)}
+                      className="text-xs text-fofGunmetal underline"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-fofGunmetal">
+                    Scheduled {scheduled}{" "}
+                    {!started && (
+                      <button
+                        onClick={() => startEditSchedule(w)}
+                        className="underline"
+                        aria-label={`Edit scheduled time for Heat ${w.wave_number}`}
+                      >
+                        (edit)
+                      </button>
+                    )}
+                  </p>
+                )}
 
                 {!started && (
                   <button
