@@ -106,6 +106,11 @@ function LoginForm() {
             {loading ? "Logging in..." : "Log in"}
           </button>
         </form>
+
+        <div className="mt-12 flex items-center justify-center gap-8 opacity-70">
+          <img src="/partners/the-box.png" alt="The Box Fitness Center" className="h-10 w-auto" />
+          <img src="/partners/mission-to-move.png" alt="Mission to Move" className="h-10 w-auto" />
+        </div>
       </div>
     </main>
   );
