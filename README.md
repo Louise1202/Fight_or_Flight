@@ -10,7 +10,7 @@ same phone-friendly web app (no install needed — just a link):
 
 | Who | URL they use | What they see |
 |---|---|---|
-| **A judge** | `/login`, then automatically sent to `/judge` | Their assigned teams, and a scan screen with one big "Scan QR code" button per team |
+| **A judge** | `/login`, then automatically sent to `/judge` | Their assigned teams, and a scan screen with one big "Confirm" button per team |
 | **A team** | `/login`, then automatically sent to `/team/[their team]` | Their own live splits, current station, and final time once finished |
 | **Spectators / a projector** | `/leaderboard` — no login | Every team's live status: finished (ranked), on course (with current station), and not yet started |
 | **You (the organizer)** | `/admin` — single shared password | A "Start Heat" button for each heat, a live monitor of all 30 teams, the full teams table (editable), judge/team account creation, a printable QR code sheet, and an Excel export |
@@ -19,13 +19,16 @@ Judges and teams both log in at the same `/login` page with a **username +
 password** — the app automatically figures out which of the two screens to
 send them to, so there's nothing for them to choose.
 
-- Each team already has a printed QR code (their team ID, e.g. `FF073001`) —
-  print a full set any time from **`/admin` → Print QR codes**.
-- On the judge's scan screen, there's one button: **Scan QR code**. The app
-  works out on its own whether this scan is an "arrive" or "leave" for the
-  current station, so there's nothing for the judge to select mid-race — and
-  the database itself double-checks every scan is actually the correct next
-  one before accepting it.
+- Each judge only ever sees their own assigned team's scan screen (never
+  anyone else's), so there's no camera or QR scanning involved — just one
+  big **Confirm** button. The app works out on its own whether this tap
+  is an "arrive" or "leave" for the current station, so there's nothing
+  for the judge to select mid-race — and the database itself
+  double-checks every confirmation is actually the correct next one
+  before accepting it.
+- Printed team QR codes (`/admin` → Print QR codes) are still available
+  for identification purposes (team cards, bib tags, etc.), but they're
+  no longer required for the timing flow itself.
 - **Nothing is timed until you start it.** Each heat's start time isn't a
   fixed value — it only becomes real the moment you press **"Start Heat N"**
   on `/admin`. The instant you do, every judge and team in that heat sees a

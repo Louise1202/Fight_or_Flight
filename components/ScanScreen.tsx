@@ -3,9 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getNextAction, buildSplits, formatDuration, Scan } from "@/lib/timing";
+import { getNextAction, buildSplits, buildLegs, formatDuration, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
-import QrScanner from "./QrScanner";
 
 type Team = {
   id: string;
@@ -56,11 +55,6 @@ function writeQueue(teamId: string, list: PendingScan[]) {
 }
 
 function newScanId(): string {
-  // crypto.randomUUID() only exists on fairly recent browsers (iOS 15.4+,
-  // for example) - on an older phone this would throw and crash the
-  // whole scan screen the instant a judge tries to record a scan. Fall
-  // back progressively so this works on any device a judge might be
-  // using on race day.
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
@@ -71,9 +65,6 @@ function newScanId(): string {
     const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
-  // Last resort (extremely old/unusual browsers only) - built without
-  // crypto, but still in valid UUID format since the database column
-  // requires it.
   const rand = () => Math.floor(Math.random() * 16).toString(16);
   const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
   return template.replace(/[xy]/g, (c) => {
@@ -97,9 +88,7 @@ export default function ScanScreen({
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
   const [wave, setWave] = useState<Wave | null>(initialWave);
   const [now, setNow] = useState(Date.now());
-  const [cameraOn, setCameraOn] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [manualCode, setManualCode] = useState("");
   const [pendingCount, setPendingCount] = useState(0);
   const [penaltySeconds, setPenaltySeconds] = useState("");
   const [penaltyNote, setPenaltyNote] = useState("");
@@ -110,10 +99,8 @@ export default function ScanScreen({
   const startTime = effectiveStartTime(team.start_time, wave);
   const next = getNextAction(scans);
   const splits = buildSplits(scans, startTime);
+  const legs = buildLegs(splits);
 
-  // Live-ticking clock, and live pickup of the admin starting this heat -
-  // both are what make "started" and the on-screen clock actually real
-  // time, not just a snapshot from when the page loaded.
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
@@ -134,6 +121,24 @@ export default function ScanScreen({
     };
   }, [supabase, team.wave]);
 
+  // Realtime above gives an instant update the moment the admin starts
+  // the heat - but that depends on Realtime being enabled for the waves
+  // table in Supabase, a manual dashboard setting that's easy to miss.
+  // This poll is a safety net: even if that setting is off, the clock
+  // still starts within a few seconds on its own, with no refresh needed.
+  useEffect(() => {
+    if (team.wave == null || hasWaveStarted(wave)) return;
+    const poll = setInterval(async () => {
+      const { data } = await supabase
+        .from("waves")
+        .select("wave_number, scheduled_start, actual_start, actual_end")
+        .eq("wave_number", team.wave)
+        .maybeSingle();
+      if (data) setWave(data as Wave);
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [supabase, team.wave, wave]);
+
   const refreshFromServer = useCallback(async () => {
     const { data } = await supabase
       .from("scans")
@@ -153,14 +158,28 @@ export default function ScanScreen({
     if (list.length === 0) return;
 
     const remaining: PendingScan[] = [];
+    let permanentlyFailed = 0;
     for (const item of list) {
       const { error } = await supabase.from("scans").insert(item);
-      if (error && error.code !== "23505") {
+      if (error) {
+        if (error.code === "23505") {
+          continue;
+        }
+        if (error.code) {
+          permanentlyFailed++;
+          continue;
+        }
         remaining.push(item);
       }
     }
     writeQueue(team.id, remaining);
     refreshPendingCount();
+
+    if (permanentlyFailed > 0) {
+      setMessage(
+        `${permanentlyFailed} scan${permanentlyFailed > 1 ? "s" : ""} couldn't be saved and won't retry automatically - tell the race organizer.`
+      );
+    }
 
     if (remaining.length < list.length) {
       await refreshFromServer();
@@ -169,12 +188,6 @@ export default function ScanScreen({
 
   useEffect(() => {
     refreshPendingCount();
-    // Merge any scans still sitting in the local queue into what's shown
-    // on screen. Without this, a scan that's queued-but-not-yet-synced
-    // becomes invisible to "Next scan" and "Progress" the moment the
-    // page reloads (its data lives in localStorage, not in the scans
-    // fetched from the server) - the banner would say "waiting to sync"
-    // while the rest of the screen quietly forgot it happened.
     const queued = readQueue(team.id);
     if (queued.length > 0) {
       setScans((prev) => {
@@ -202,7 +215,7 @@ export default function ScanScreen({
   }, [flushQueue, refreshPendingCount]);
 
   async function recordScan(stationNumber: number, eventType: "arrive" | "leave") {
-    if (submitting) return; // a previous tap is still being recorded - ignore this one
+    if (submitting) return;
     setSubmitting(true);
     try {
       await doRecordScan(stationNumber, eventType);
@@ -230,9 +243,16 @@ export default function ScanScreen({
     if (error) {
       if (error.message?.includes("INVALID_SCAN")) {
         setMessage(
-          "That scan doesn't match this team's expected next step. Refreshing..."
+          "That doesn't match this team's expected next step. Refreshing..."
         );
         await refreshFromServer();
+        return;
+      }
+
+      if (error.code) {
+        setMessage(
+          `Couldn't save this scan: ${error.message}. Tell the race organizer - this needs fixing, not just a retry.`
+        );
         return;
       }
 
@@ -250,33 +270,6 @@ export default function ScanScreen({
 
     setScans((prev) => [...prev, data]);
     setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded for station ${stationNumber === 13 ? "FINISH" : stationNumber}.`);
-  }
-
-  function handleDecode(text: string) {
-    if (submitting) return; // already recording a previous scan - ignore
-
-    // Normalize both sides the same way before comparing - strips any
-    // invisible whitespace, zero-width characters, or casing difference
-    // that could otherwise cause a false "wrong team" mismatch even when
-    // the codes look identical on screen.
-    const normalize = (s: string) =>
-      s.replace(/[\s\u200B-\u200D\uFEFF]/g, "").toUpperCase();
-
-    if (normalize(text) !== normalize(team.id)) {
-      setMessage(`That QR is for a different team (${text}). Scan ${team.id} instead.`);
-      return;
-    }
-    if (next.isFinished) {
-      setMessage("This team has already finished.");
-      return;
-    }
-    setCameraOn(false);
-    recordScan(next.stationNumber, next.eventType);
-  }
-
-  function handleManualConfirm() {
-    handleDecode(manualCode.trim().toUpperCase());
-    setManualCode("");
   }
 
   async function undoLast() {
@@ -339,8 +332,8 @@ export default function ScanScreen({
           </p>
           <p className="mt-2 font-display text-xl">Waiting for the admin to start</p>
           <p className="mt-2 text-xs text-fofGunmetal">
-            Your clock and scan button appear the instant it starts — no need to
-            refresh.
+            Your clock and Confirm button appear the instant it starts — no
+            need to refresh.
           </p>
         </section>
       ) : (
@@ -359,64 +352,20 @@ export default function ScanScreen({
           )}
 
           <section className="mt-4 rounded-lg border-2 border-fofRed p-4 text-center">
-            <p className="text-sm text-fofGunmetal">Next scan</p>
+            <p className="text-sm text-fofGunmetal">Next</p>
             <p className="font-display text-xl text-fofRed">
               {next.isFinished ? "FINISHED" : next.label}
             </p>
           </section>
 
           {!next.isFinished && (
-            <div className="mt-4 space-y-3">
-              {!cameraOn ? (
-                <button
-                  onClick={() => {
-                    setMessage(null);
-                    setCameraOn(true);
-                  }}
-                  disabled={submitting}
-                  className="tap-target w-full rounded-md bg-fofRed font-display text-lg disabled:opacity-50"
-                >
-                  {submitting ? "Recording..." : "Scan QR code"}
-                </button>
-              ) : (
-                <>
-                  <QrScanner
-                    active={cameraOn}
-                    onDecode={handleDecode}
-                    onError={(msg) => {
-                      setMessage(msg);
-                      setCameraOn(false);
-                    }}
-                  />
-                  <button
-                    onClick={() => setCameraOn(false)}
-                    className="tap-target w-full rounded-md border border-fofGunmetal text-fofGunmetal"
-                  >
-                    Cancel
-                  </button>
-                </>
-              )}
-
-              <details className="text-sm text-fofGunmetal">
-                <summary>Camera not working? Enter code manually</summary>
-                <div className="mt-2 flex gap-2">
-                  <input
-                    value={manualCode}
-                    onChange={(e) => setManualCode(e.target.value)}
-                    placeholder={team.id}
-                    disabled={submitting}
-                    className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3 uppercase disabled:opacity-50"
-                  />
-                  <button
-                    onClick={handleManualConfirm}
-                    disabled={submitting || !manualCode.trim()}
-                    className="tap-target rounded-md border border-fofRed px-4 text-fofRed disabled:opacity-50"
-                  >
-                    {submitting ? "..." : "Confirm"}
-                  </button>
-                </div>
-              </details>
-            </div>
+            <button
+              onClick={() => recordScan(next.stationNumber, next.eventType)}
+              disabled={submitting}
+              className="tap-target mt-4 w-full rounded-md bg-fofRed font-display text-lg disabled:opacity-50"
+            >
+              {submitting ? "Recording..." : "Confirm"}
+            </button>
           )}
 
           {message && (
@@ -474,25 +423,19 @@ export default function ScanScreen({
               PROGRESS
             </h2>
             <ul className="space-y-1 text-sm">
-              {splits
-                .filter((s) => s.arrivedAt)
-                .map((s) => (
-                  <li key={s.station}>
-                    {s.runMs != null && (
-                      <p className="py-0.5 text-center text-xs text-fofGunmetal">
-                        {formatDuration(s.runMs)}
-                      </p>
-                    )}
-                    <div className="flex justify-between border-b border-fofCharcoal py-1">
-                      <span>
-                        {s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}
-                      </span>
-                      <span className="text-fofGunmetal">
-                        {s.stationMs != null ? formatDuration(s.stationMs) : ""}
-                      </span>
-                    </div>
-                  </li>
-                ))}
+              {legs.map((leg, i) => (
+                <li
+                  key={i}
+                  className="flex justify-between border-b border-fofCharcoal py-1"
+                >
+                  <span>
+                    {i + 1}. {leg.label}
+                  </span>
+                  <span className="text-fofGunmetal">
+                    {leg.ms != null ? formatDuration(leg.ms) : ""}
+                  </span>
+                </li>
+              ))}
             </ul>
           </section>
         </>

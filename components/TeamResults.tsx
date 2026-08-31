@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { buildSplits, formatDuration, getNextAction, Scan } from "@/lib/timing";
+import { buildSplits, buildLegs, formatDuration, getNextAction, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
 import LogoutButton from "./LogoutButton";
 
@@ -70,6 +70,22 @@ export default function TeamResults({
     };
   }, [supabase, team.wave]);
 
+  // Safety net alongside Realtime above, in case Realtime isn't enabled
+  // for the waves table - the team's own clock still starts within a
+  // few seconds on its own either way, with no refresh needed.
+  useEffect(() => {
+    if (team.wave == null || hasWaveStarted(wave)) return;
+    const poll = setInterval(async () => {
+      const { data } = await supabase
+        .from("waves")
+        .select("wave_number, scheduled_start, actual_start, actual_end")
+        .eq("wave_number", team.wave)
+        .maybeSingle();
+      if (data) setWave(data as Wave);
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [supabase, team.wave, wave]);
+
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
@@ -78,6 +94,7 @@ export default function TeamResults({
   const started = hasWaveStarted(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
   const splits = buildSplits(scans, startTime);
+  const legs = buildLegs(splits);
   const next = getNextAction(scans);
   const totalPenaltySeconds = penalties.reduce((sum, p) => sum + p.penalty_seconds, 0);
 
@@ -143,23 +160,17 @@ export default function TeamResults({
           SPLITS
         </h2>
         <ul className="space-y-1 text-sm">
-          {splits.map((s) => (
-            <li key={s.station}>
-              {s.runMs != null && (
-                <p className="py-0.5 text-center text-xs text-fofGunmetal">
-                  {formatDuration(s.runMs)}
-                </p>
-              )}
-              <div className="flex justify-between border-b border-fofCharcoal py-1">
-                <span>{s.station === 13 ? "Finish" : `${s.station}. ${s.name}`}</span>
-                <span className="text-fofGunmetal">
-                  {s.stationMs != null
-                    ? formatDuration(s.stationMs)
-                    : s.runMs == null
-                    ? "—"
-                    : ""}
-                </span>
-              </div>
+          {legs.map((leg, i) => (
+            <li
+              key={i}
+              className="flex justify-between border-b border-fofCharcoal py-1"
+            >
+              <span>
+                {i + 1}. {leg.label}
+              </span>
+              <span className="text-fofGunmetal">
+                {leg.ms != null ? formatDuration(leg.ms) : ""}
+              </span>
             </li>
           ))}
         </ul>

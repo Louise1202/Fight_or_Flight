@@ -135,3 +135,31 @@ export function buildSplits(scans: Scan[], startTime: string) {
     };
   });
 }
+
+export type Leg = {
+  label: string;
+  ms: number | null;
+};
+
+/**
+ * Flattens buildSplits() output into the actual sequence a team
+ * physically does: 400m run, then a station, then another 400m run,
+ * then the next station, and so on - each as its own numbered step with
+ * its own time, rather than grouping a run together with the station it
+ * leads into.
+ */
+export function buildLegs(splits: ReturnType<typeof buildSplits>): Leg[] {
+  const legs: Leg[] = [];
+  for (const s of splits) {
+    if (!s.arrivedAt) continue;
+    if (s.runMs != null) {
+      legs.push({ label: "400m run", ms: s.runMs });
+    }
+    if (s.station === 13) {
+      legs.push({ label: "Finish", ms: null });
+    } else {
+      legs.push({ label: s.name, ms: s.stationMs });
+    }
+  }
+  return legs;
+}
