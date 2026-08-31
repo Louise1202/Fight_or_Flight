@@ -33,7 +33,8 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/_next") ||
     path.startsWith("/api/admin") || // admin API checks its own cookie
     path.startsWith("/leaderboard") || // public spectator screen
-    path.startsWith("/api/leaderboard"); // public leaderboard data
+    path.startsWith("/api/leaderboard") || // public leaderboard data
+    path.startsWith("/style-guide"); // public design reference page
 
   // Judge/team routes need a real Supabase session.
   if (!isPublic && !path.startsWith("/admin") && !user) {
