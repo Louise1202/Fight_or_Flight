@@ -83,6 +83,17 @@ export default function AdminDashboard({
   }
 
   async function undoHeat(waveNumber: number, field: "start" | "end") {
+    if (field === "start") {
+      const teamIdsInHeat = teams.filter((t) => t.wave === waveNumber).map((t) => t.id);
+      const hasScans = scans.some((s: any) => teamIdsInHeat.includes(s.team_id));
+      if (hasScans) {
+        const confirmed = window.confirm(
+          `Teams in Heat ${waveNumber} already have scans recorded. Undoing the start will make their times wrong, since those scans are tied to the old start time - it will NOT clear the scans for you. Only do this if you're about to also fix or clear that data. Continue?`
+        );
+        if (!confirmed) return;
+      }
+    }
+
     setWaveActionId(waveNumber);
     const res = await fetch("/api/admin/waves", {
       method: "DELETE",
@@ -115,6 +126,31 @@ export default function AdminDashboard({
   const [viewerPassword, setViewerPassword] = useState("");
   const [creatingViewer, setCreatingViewer] = useState(false);
   const [viewerCreateStatus, setViewerCreateStatus] = useState<string | null>(null);
+
+  // --- Reset for new event ---
+  const [resetScope, setResetScope] = useState<"race-data" | "full" | null>(null);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetStatus, setResetStatus] = useState<string | null>(null);
+
+  async function runReset() {
+    if (resetConfirmText !== "RESET") return;
+    setResetting(true);
+    setResetStatus(null);
+    const res = await fetch("/api/admin/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: resetScope }),
+    });
+    const data = await res.json();
+    setResetting(false);
+    if (!res.ok) {
+      setResetStatus(data.error ?? "Something went wrong.");
+      return;
+    }
+    setResetStatus("Done. Reloading...");
+    setTimeout(() => window.location.reload(), 1200);
+  }
 
   function updateField(id: string, field: keyof Team, value: string) {
     setRows((prev) =>
@@ -615,6 +651,89 @@ export default function AdminDashboard({
             );
           })}
         </ul>
+      </section>
+
+      <section className="mt-12 rounded border-2 border-fofRed p-4">
+        <h2 className="mb-2 font-display text-lg text-fofRed">Danger zone</h2>
+        <p className="mb-4 text-sm text-fofGunmetal">
+          Export to Excel first if you want to keep a record - resetting
+          permanently deletes data from the database, it isn't recoverable
+          afterward.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded border border-fofCharcoal p-3">
+            <p className="font-display text-sm">Reset race data</p>
+            <p className="mb-2 text-xs text-fofGunmetal">
+              Clears all scans, penalties, and heat start/end times. Keeps
+              your teams, judges, and assignments exactly as they are - use
+              this to re-run the same event from zero.
+            </p>
+            <button
+              onClick={() => {
+                setResetScope("race-data");
+                setResetConfirmText("");
+                setResetStatus(null);
+              }}
+              className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
+            >
+              Reset race data...
+            </button>
+          </div>
+
+          <div className="rounded border border-fofCharcoal p-3">
+            <p className="font-display text-sm">Full reset for a new event</p>
+            <p className="mb-2 text-xs text-fofGunmetal">
+              Deletes everything above, plus every team, judge, judge
+              login, and team login. Use this when setting up a
+              completely different event on this same app.
+            </p>
+            <button
+              onClick={() => {
+                setResetScope("full");
+                setResetConfirmText("");
+                setResetStatus(null);
+              }}
+              className="rounded border border-fofRed px-3 py-2 text-sm text-fofRed"
+            >
+              Full reset...
+            </button>
+          </div>
+        </div>
+
+        {resetScope && (
+          <div className="mt-4 rounded border border-fofRed p-3">
+            <p className="mb-2 text-sm">
+              {resetScope === "full"
+                ? "This deletes ALL teams, judges, and logins, in addition to race data. This cannot be undone."
+                : "This deletes all scans, penalties, and heat times. Teams and judges stay. This cannot be undone."}
+            </p>
+            <p className="mb-2 text-sm text-fofGunmetal">
+              Type <span className="font-mono text-fofRed">RESET</span> to confirm:
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                className="tap-target flex-1 rounded border border-fofGunmetal bg-transparent px-3"
+              />
+              <button
+                onClick={runReset}
+                disabled={resetConfirmText !== "RESET" || resetting}
+                className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+              >
+                {resetting ? "Resetting..." : "Confirm"}
+              </button>
+              <button
+                onClick={() => setResetScope(null)}
+                className="tap-target rounded border border-fofGunmetal px-4 text-fofGunmetal"
+              >
+                Cancel
+              </button>
+            </div>
+            {resetStatus && <p className="mt-2 text-sm text-fofGunmetal">{resetStatus}</p>}
+          </div>
+        )}
       </section>
     </main>
   );

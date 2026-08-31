@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getNextAction, buildSplits, buildLegs, formatDuration, Scan } from "@/lib/timing";
-import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
+import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 
 type Team = {
   id: string;
@@ -105,6 +105,7 @@ export default function ScanScreen({
   const [submitting, setSubmitting] = useState(false);
 
   const started = hasWaveStarted(wave);
+  const ended = hasWaveEnded(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
   const next = getNextAction(scans);
   const splits = buildSplits(scans, startTime);
@@ -345,6 +346,46 @@ export default function ScanScreen({
             need to refresh.
           </p>
         </section>
+      ) : ended ? (
+        <>
+          <section className="mt-6 rounded-lg border-2 border-fofGunmetal p-4 text-center">
+            <p className="text-sm text-fofGunmetal">
+              Heat {wave?.wave_number} has ended
+            </p>
+            <p className="font-display text-3xl">
+              {wave?.actual_end
+                ? formatDuration(
+                    new Date(wave.actual_end).getTime() - new Date(startTime).getTime()
+                  )
+                : "—"}
+            </p>
+            <p className="mt-2 text-xs text-fofGunmetal">
+              Scanning is closed for this heat. Contact the race organizer if
+              this team still needs to be recorded.
+            </p>
+          </section>
+
+          <section className="mt-8">
+            <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
+              PROGRESS
+            </h2>
+            <ul className="space-y-1 text-sm">
+              {legs.map((leg, i) => (
+                <li
+                  key={i}
+                  className="flex justify-between border-b border-fofCharcoal py-1"
+                >
+                  <span>
+                    {i + 1}. {leg.label}
+                  </span>
+                  <span className="text-fofGunmetal">
+                    {leg.ms != null ? formatDuration(leg.ms) : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
       ) : (
         <>
           <section className="mt-6 rounded-lg border-2 border-fofRed p-4 text-center">
