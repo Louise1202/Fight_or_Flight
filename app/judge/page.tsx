@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { getNextAction } from "@/lib/timing";
-import { hasWaveStarted, Wave } from "@/lib/waves";
-import LogoutButton from "@/components/LogoutButton";
+import { Scan } from "@/lib/timing";
+import { Wave } from "@/lib/waves";
+import JudgeDashboard from "@/components/JudgeDashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -24,73 +23,40 @@ export default async function JudgeHome() {
 
   const { data: assignments } = await supabase
     .from("judge_team_assignments")
-    .select("team_id, teams(id, team_name, athlete_1, athlete_2, wave)")
+    .select("team_id, teams(id, team_name, athlete_1, athlete_2, start_time, wave)")
     .eq("judge_id", judge.id);
 
-  const teamIds = (assignments ?? []).map((a) => a.team_id);
+  const teams = (assignments ?? []).map((a: any) => a.teams);
+  const teamIds = teams.map((t) => t.id);
 
   const [{ data: allScans }, { data: waves }] = await Promise.all([
     teamIds.length
       ? supabase
           .from("scans")
-          .select("team_id, station_number, event_type, scanned_at")
+          .select("id, team_id, station_number, event_type, scanned_at")
           .in("team_id", teamIds)
+          .order("scanned_at", { ascending: true })
       : Promise.resolve({ data: [] as any[] }),
     supabase.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
   ]);
 
-  const waveByNumber = new Map<number, Wave>((waves ?? []).map((w) => [w.wave_number, w as Wave]));
+  const scansByTeam: Record<string, (Scan & { id: number })[]> = {};
+  for (const scan of allScans ?? []) {
+    (scansByTeam[scan.team_id] ??= []).push(scan);
+  }
+
+  const wavesByNumber: Record<number, Wave> = {};
+  for (const w of waves ?? []) {
+    wavesByNumber[w.wave_number] = w as Wave;
+  }
 
   return (
-    <main className="mx-auto max-w-md px-4 py-8">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <p className="text-sm text-fofGunmetal">Judging as</p>
-          <p className="font-display text-xl">{judge.name}</p>
-        </div>
-        <LogoutButton />
-      </header>
-
-      <h1 className="mb-4 font-display text-lg tracking-wide text-fofRed">
-        YOUR TEAMS
-      </h1>
-
-      <ul className="space-y-3">
-        {(assignments ?? []).map((a: any) => {
-          const team = a.teams;
-          const teamScans = (allScans ?? []).filter((s) => s.team_id === team.id);
-          const next = getNextAction(teamScans);
-          const wave = team.wave != null ? waveByNumber.get(team.wave) : undefined;
-          const started = hasWaveStarted(wave);
-          return (
-            <li key={team.id}>
-              <Link
-                href={`/judge/${team.id}`}
-                className="tap-target flex flex-col justify-center rounded-md border border-fofGunmetal px-4 py-3 hover:border-fofRed"
-              >
-                <span className="font-display">{team.team_name}</span>
-                <span className="text-sm text-fofGunmetal">
-                  {team.athlete_1}
-                  {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
-                </span>
-                <span className="mt-1 text-sm text-fofRed">
-                  {!started
-                    ? `Waiting for Heat ${team.wave} to start`
-                    : next.isFinished
-                    ? "Finished"
-                    : `Next: ${next.label}`}
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-
-      {(!assignments || assignments.length === 0) && (
-        <p className="text-fofGunmetal">
-          No teams assigned to you yet. Check with the race organizer.
-        </p>
-      )}
-    </main>
+    <JudgeDashboard
+      judgeName={judge.name}
+      judgeId={judge.id}
+      teams={teams}
+      scansByTeam={scansByTeam}
+      wavesByNumber={wavesByNumber}
+    />
   );
 }
