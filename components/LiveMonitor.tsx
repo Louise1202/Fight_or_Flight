@@ -24,13 +24,6 @@ function staleness(lastUpdate: string | null, now: number): "fresh" | "warn" | "
   return "stale";
 }
 
-function timeAgo(lastUpdate: string | null, now: number): string {
-  if (!lastUpdate) return "—";
-  const seconds = Math.floor((now - new Date(lastUpdate).getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  return `${Math.floor(seconds / 60)}m ago`;
-}
-
 export default function LiveMonitor() {
   const [rows, setRows] = useState<LiveRow[]>([]);
   const [counts, setCounts] = useState<Counts | null>(null);
@@ -99,14 +92,19 @@ export default function LiveMonitor() {
                     <th className="p-2">Team #</th>
                     <th className="p-2">Judge</th>
                     <th className="p-2">Current station</th>
-                    <th className="p-2">Elapsed</th>
-                    <th className="p-2">Last scan</th>
+                    <th className="p-2">Time here</th>
+                    <th className="p-2">Total time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {inProgress.map((r) => {
                     const state = staleness(r.lastUpdate, now);
-                    const elapsed = r.startTime ? now - new Date(r.startTime).getTime() : 0;
+                    const totalElapsed = r.startTime ? now - new Date(r.startTime).getTime() : 0;
+                    // How long since their last scan - i.e. how long
+                    // they've actually been on whatever they're doing
+                    // right now (the run, or the station itself), not
+                    // the whole race so far.
+                    const timeOnThisLeg = r.lastUpdate ? now - new Date(r.lastUpdate).getTime() : 0;
                     return (
                       <tr key={r.team.id} className="border-b border-fofCharcoal">
                         <td className="p-2">
@@ -127,11 +125,11 @@ export default function LiveMonitor() {
                         </td>
                         <td className="p-2 text-fofGunmetal">
                           {r.currentStationNumber <= 12
-                            ? `Station ${r.currentStationNumber}`
+                            ? `Station ${r.currentStationNumber}: ${r.currentStationLabel}`
                             : "Heading to finish"}
                         </td>
-                        <td className="p-2 text-fofGunmetal">{formatDuration(elapsed)}</td>
-                        <td className="p-2 text-fofGunmetal">{timeAgo(r.lastUpdate, now)}</td>
+                        <td className="p-2 text-fofGunmetal">{formatDuration(timeOnThisLeg)}</td>
+                        <td className="p-2 text-fofGunmetal">{formatDuration(totalElapsed)}</td>
                       </tr>
                     );
                   })}
