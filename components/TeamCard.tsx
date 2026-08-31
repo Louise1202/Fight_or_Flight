@@ -96,7 +96,7 @@ export default function TeamCard({
   useEffect(() => {
     if (team.wave == null) return;
     const channel = supabase
-      .channel(`wave-${team.wave}-card`)
+      .channel(`wave-${team.wave}-card-${team.id}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "waves", filter: `wave_number=eq.${team.wave}` },
