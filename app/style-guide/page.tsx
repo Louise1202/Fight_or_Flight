@@ -19,7 +19,7 @@ export default function StyleGuidePage() {
   return (
     <main className="ground min-h-screen px-6 py-10 sm:px-10">
       <header className="mx-auto flex max-w-4xl items-center gap-4 border-b border-fofCharcoal pb-6">
-        <Image src="/logo.png" alt="Fight or Flight" width={64} height={64} className="rounded-full" />
+        <Image src="/logo.png" alt="Fight or Flight" width={96} height={96} className="rounded-full" />
         <div>
           <h1 className="font-display text-4xl tracking-wide">VISUAL SYSTEM</h1>
           <p className="nums mt-1 text-[11px] tracking-[2px] text-fofGunmetal">
@@ -89,9 +89,9 @@ export default function StyleGuidePage() {
       </section>
 
       <footer className="stitch mx-auto mt-10 flex max-w-4xl items-center justify-center gap-5 pt-6">
-        <Image src="/partners/the-box.png" alt="The Box Fitness Center" width={120} height={46} className="h-11 w-auto opacity-90" />
+        <Image src="/partners/the-box.png" alt="The Box Fitness Center" width={180} height={69} className="h-[66px] w-auto opacity-90" />
         <span className="h-8 w-px bg-fofCharcoal" />
-        <Image src="/partners/mission-to-move.png" alt="Mission to Move" width={120} height={50} className="h-12 w-auto opacity-90" />
+        <Image src="/partners/mission-to-move.png" alt="Mission to Move" width={180} height={75} className="h-[72px] w-auto opacity-90" />
       </footer>
     </main>
   );

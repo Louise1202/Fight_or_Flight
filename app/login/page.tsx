@@ -55,7 +55,7 @@ function LoginForm() {
           <img
             src="/logo.png"
             alt="Fight or Flight"
-            className="mx-auto mb-4 h-28 w-28 rounded-full"
+            className="mx-auto mb-4 h-[168px] w-[168px] rounded-full"
           />
           <p className="font-display text-3xl tracking-tight text-fofPaper">
             FIGHT <span className="text-fofRed">OR</span> FLIGHT
@@ -108,8 +108,8 @@ function LoginForm() {
         </form>
 
         <div className="mt-12 flex items-center justify-center gap-8 opacity-70">
-          <img src="/partners/the-box.png" alt="The Box Fitness Center" className="h-10 w-auto" />
-          <img src="/partners/mission-to-move.png" alt="Mission to Move" className="h-10 w-auto" />
+          <img src="/partners/the-box.png" alt="The Box Fitness Center" className="h-[60px] w-auto" />
+          <img src="/partners/mission-to-move.png" alt="Mission to Move" className="h-[60px] w-auto" />
         </div>
       </div>
     </main>

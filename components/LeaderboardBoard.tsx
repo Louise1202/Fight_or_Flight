@@ -45,7 +45,7 @@ export default function LeaderboardBoard({
         <img
           src="/logo.png"
           alt="Fight or Flight"
-          className="mx-auto mb-3 h-20 w-20 rounded-full"
+          className="mx-auto mb-3 h-[120px] w-[120px] rounded-full"
         />
         <p className="font-display text-4xl tracking-wide">
           FIGHT <span className="text-fofRed">OR</span> FLIGHT
