@@ -46,5 +46,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Anything ending in a common static file extension (images, icons,
+  // fonts, etc.) bypasses this middleware entirely - those are public
+  // files sitting in /public, not app routes that need a login check.
+  // Without this, a logged-out request for something as simple as the
+  // logo gets redirected to /login and served HTML instead of the image.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|avif)$).*)",
+  ],
 };
