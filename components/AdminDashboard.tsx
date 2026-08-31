@@ -133,6 +133,46 @@ export default function AdminDashboard({
   const [resetting, setResetting] = useState(false);
   const [resetStatus, setResetStatus] = useState<string | null>(null);
 
+  // --- Import from Excel ---
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importDate, setImportDate] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  async function runImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!importFile || !importDate) {
+      setImportStatus("Choose a file and an event date first.");
+      return;
+    }
+    setImporting(true);
+    setImportStatus(null);
+
+    const formData = new FormData();
+    formData.append("file", importFile);
+    formData.append("eventDate", importDate);
+
+    const res = await fetch("/api/admin/import", { method: "POST", body: formData });
+    const data = await res.json();
+    setImporting(false);
+
+    if (!res.ok) {
+      setImportStatus(data.error ?? "Import failed.");
+      return;
+    }
+
+    const s = data.summary;
+    let msg = `Imported ${s.teamsImported} teams`;
+    if (s.wavesImported > 0) msg += `, ${s.wavesImported} heat schedules`;
+    if (s.judgeAssignmentsLinked > 0) msg += `, linked ${s.judgeAssignmentsLinked} judge assignments`;
+    msg += ".";
+    if (s.unmatchedJudgeNames?.length > 0) {
+      msg += ` Couldn't match these judge names to an existing login: ${s.unmatchedJudgeNames.join(", ")} - create their logins, then assign them manually below.`;
+    }
+    setImportStatus(msg);
+    setTimeout(() => window.location.reload(), 3000);
+  }
+
   async function runReset() {
     if (resetConfirmText !== "RESET") return;
     setResetting(true);
@@ -298,6 +338,46 @@ export default function AdminDashboard({
           Sign out
         </button>
       </div>
+
+      <section className="mb-10 rounded border border-fofCharcoal p-4">
+        <h2 className="mb-2 font-display text-lg">Import from Excel</h2>
+        <p className="mb-3 text-sm text-fofGunmetal">
+          Upload a workbook matching the original Race HQ format (a{" "}
+          <span className="font-mono">Teams</span> sheet with Team ID, Team
+          Name, Athlete 1/2, Division, Heat, Start Time, Judges - and
+          optionally a <span className="font-mono">Waves</span> sheet with
+          Wave and Scheduled Start). Existing teams with matching IDs are
+          updated, not duplicated.
+        </p>
+        <form onSubmit={runImport} className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Event date</label>
+            <input
+              type="date"
+              value={importDate}
+              onChange={(e) => setImportDate(e.target.value)}
+              className="tap-target rounded border border-fofGunmetal bg-transparent px-3"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Workbook (.xlsx)</label>
+            <input
+              type="file"
+              accept=".xlsx"
+              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              className="text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={importing}
+            className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+          >
+            {importing ? "Importing..." : "Import"}
+          </button>
+        </form>
+        {importStatus && <p className="mt-2 text-sm text-fofGunmetal">{importStatus}</p>}
+      </section>
 
       <section className="mb-10">
         <h2 className="mb-2 font-display text-lg">Race day control</h2>
