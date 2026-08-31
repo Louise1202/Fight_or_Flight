@@ -67,6 +67,14 @@ function newScanId(): string {
   );
 }
 
+// queued_at exists only for this phone's own local ordering/display - it
+// is NOT a column in the scans table, and must never be sent to the
+// database. Both places that insert a scan go through this helper.
+function toScanInsert(p: PendingScan) {
+  const { queued_at, ...dbFields } = p;
+  return dbFields;
+}
+
 export default function TeamCard({
   team,
   judgeId,
@@ -139,7 +147,7 @@ export default function TeamCard({
     if (list.length === 0) return;
     const remaining: PendingScan[] = [];
     for (const item of list) {
-      const { error } = await supabase.from("scans").insert(item);
+      const { error } = await supabase.from("scans").insert(toScanInsert(item));
       if (error && error.code !== "23505" && !error.code) {
         remaining.push(item);
       }
@@ -193,7 +201,7 @@ export default function TeamCard({
 
     const { data, error } = await supabase
       .from("scans")
-      .insert(payload)
+      .insert(toScanInsert(payload))
       .select("id, station_number, event_type, scanned_at")
       .single();
 
