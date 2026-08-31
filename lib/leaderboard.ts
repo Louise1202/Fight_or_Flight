@@ -4,6 +4,8 @@ import { effectiveStartTime, hasWaveStarted, Wave } from "./waves";
 export type TeamRow = {
   id: string;
   team_name: string;
+  athlete_1?: string | null;
+  athlete_2?: string | null;
   division: string | null;
   wave: number | null;
   start_time: string;
@@ -18,6 +20,14 @@ export type Standing = {
    * means they've arrived and are actually doing the exercise there.
    * null when not in progress (nothing meaningful to show). */
   currentEventType: "arrive" | "leave" | null;
+  /** Raw finish time - the clock alone, before any penalty is added.
+   * null unless finished. */
+  rawMs: number | null;
+  /** Total penalty seconds applied. Always present (0 if none), so
+   * finish + penalty always adds up to final on screen. */
+  penaltySeconds: number;
+  /** rawMs + penaltySeconds*1000 - the official time. null unless
+   * finished. */
   finalMs: number | null;
   lastUpdate: string | null;
   /** The real start time this team's clock actually runs from (wave's
@@ -51,6 +61,8 @@ export function computeStandings(
         currentStationNumber: 0,
         currentStationLabel: "Not started",
         currentEventType: null,
+        rawMs: null,
+        penaltySeconds,
         finalMs: null,
         lastUpdate: null,
         startTime: null,
@@ -77,6 +89,8 @@ export function computeStandings(
         currentStationNumber: 13,
         currentStationLabel: "Finished",
         currentEventType: null,
+        rawMs,
+        penaltySeconds,
         finalMs: rawMs != null ? rawMs + penaltySeconds * 1000 : null,
         lastUpdate: lastScan.scanned_at,
         startTime,
@@ -89,6 +103,8 @@ export function computeStandings(
       currentStationNumber: next.stationNumber,
       currentStationLabel: next.stationName,
       currentEventType: next.eventType,
+      rawMs: null,
+      penaltySeconds,
       finalMs: null,
       // Before the first scan, "last activity" is the heat's own start -
       // that's what the staleness check on the admin monitor should

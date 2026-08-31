@@ -4,11 +4,21 @@ import { useEffect, useState } from "react";
 import { formatDuration } from "@/lib/timing";
 
 type LiveRow = {
-  team: { id: string; team_name: string; division: string | null; wave: number | null; start_time: string };
+  team: {
+    id: string;
+    team_name: string;
+    athlete_1: string | null;
+    athlete_2: string | null;
+    division: string | null;
+    wave: number | null;
+    start_time: string;
+  };
   status: "finished" | "in_progress" | "not_started";
   currentStationNumber: number;
   currentStationLabel: string;
   currentEventType: "arrive" | "leave" | null;
+  rawMs: number | null;
+  penaltySeconds: number;
   finalMs: number | null;
   lastUpdate: string | null;
   startTime: string | null;
@@ -42,6 +52,10 @@ function StationText({ row }: { row: LiveRow }) {
       Station {row.currentStationNumber}: {row.currentStationLabel}
     </>
   );
+}
+
+function athleteLine(team: LiveRow["team"]): string {
+  return [team.athlete_1, team.athlete_2].filter(Boolean).join(" & ");
 }
 
 export default function LiveMonitor() {
@@ -117,6 +131,7 @@ export default function LiveMonitor() {
                           {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                         </span>
                       </div>
+                      <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
                       <p className="mt-1 text-fofGunmetal">
                         <StationText row={r} />
                       </p>
@@ -131,7 +146,7 @@ export default function LiveMonitor() {
 
               {/* Desktop/tablet: full table */}
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[640px] border-collapse text-sm">
+                <table className="w-full min-w-[720px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
                       <th className="p-2"></th>
@@ -152,7 +167,10 @@ export default function LiveMonitor() {
                           <td className="p-2">
                             <StatusDot state={state} />
                           </td>
-                          <td className="p-2 font-display">{r.team.team_name}</td>
+                          <td className="p-2">
+                            <p className="font-display">{r.team.team_name}</p>
+                            <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                          </td>
                           <td className="p-2 text-fofGunmetal">
                             {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                           </td>
@@ -174,44 +192,55 @@ export default function LiveMonitor() {
             <div>
               <p className="mb-1 text-xs uppercase tracking-wide text-fofGunmetal">Finished</p>
 
-              {/* Phone: stacked cards */}
+              {/* Phone: stacked cards showing the full breakdown */}
               <div className="space-y-2 md:hidden">
                 {finished.map((r) => (
-                  <div
-                    key={r.team.id}
-                    className="flex items-center justify-between rounded border border-fofCharcoal p-3 text-sm"
-                  >
-                    <div>
+                  <div key={r.team.id} className="rounded border border-fofCharcoal p-3 text-sm">
+                    <div className="flex items-center justify-between">
                       <p className="font-display">{r.team.team_name}</p>
                       <p className="text-xs text-fofGunmetal">
                         {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                       </p>
                     </div>
-                    <p className="font-display text-fofRed">
+                    <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                    <div className="mt-2 flex justify-between text-xs text-fofGunmetal">
+                      <span>Finish: {r.rawMs != null ? formatDuration(r.rawMs) : "—"}</span>
+                      <span>Penalty: +{r.penaltySeconds}s</span>
+                    </div>
+                    <p className="mt-1 text-right font-display text-fofRed">
                       {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
                     </p>
                   </div>
                 ))}
               </div>
 
-              {/* Desktop/tablet: full table */}
+              {/* Desktop/tablet: full table with the breakdown */}
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[400px] border-collapse text-sm">
+                <table className="w-full min-w-[640px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
                       <th className="p-2">Team #</th>
                       <th className="p-2">Judge</th>
+                      <th className="p-2">Finish time</th>
+                      <th className="p-2">Penalties</th>
                       <th className="p-2">Final time</th>
                     </tr>
                   </thead>
                   <tbody>
                     {finished.map((r) => (
                       <tr key={r.team.id} className="border-b border-fofCharcoal">
-                        <td className="p-2 font-display">{r.team.team_name}</td>
+                        <td className="p-2">
+                          <p className="font-display">{r.team.team_name}</p>
+                          <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                        </td>
                         <td className="p-2 text-fofGunmetal">
                           {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                         </td>
-                        <td className="p-2 text-fofRed">
+                        <td className="p-2 text-fofGunmetal">
+                          {r.rawMs != null ? formatDuration(r.rawMs) : "—"}
+                        </td>
+                        <td className="p-2 text-fofGunmetal">+{r.penaltySeconds}s</td>
+                        <td className="p-2 font-display text-fofRed">
                           {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
                         </td>
                       </tr>
