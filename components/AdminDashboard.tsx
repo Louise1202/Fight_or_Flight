@@ -38,6 +38,62 @@ export default function AdminDashboard({
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentList, setAssignmentList] = useState<Assignment[]>(assignments);
   const [newJudgeId, setNewJudgeId] = useState(judges[0]?.id ?? "");
+  const [judgeList, setJudgeList] = useState<Judge[]>(judges);
+  const [editingJudgeId, setEditingJudgeId] = useState<string | null>(null);
+  const [editJudgeName, setEditJudgeName] = useState("");
+  const [editJudgeUsername, setEditJudgeUsername] = useState("");
+  const [editJudgePassword, setEditJudgePassword] = useState("");
+  const [judgeEditStatus, setJudgeEditStatus] = useState<string | null>(null);
+  const [judgeEditBusy, setJudgeEditBusy] = useState(false);
+
+  function startEditJudge(judge: Judge) {
+    setEditingJudgeId(judge.id);
+    setEditJudgeName(judge.name);
+    setEditJudgeUsername("");
+    setEditJudgePassword("");
+    setJudgeEditStatus(null);
+  }
+
+  async function saveJudgeEdit(judgeId: string) {
+    setJudgeEditBusy(true);
+    setJudgeEditStatus(null);
+    const res = await fetch(`/api/admin/judges/${judgeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: editJudgeName,
+        username: editJudgeUsername || undefined,
+        password: editJudgePassword || undefined,
+      }),
+    });
+    const data = await res.json();
+    setJudgeEditBusy(false);
+    if (!res.ok) {
+      setJudgeEditStatus(data.error ?? "Couldn't save changes.");
+      return;
+    }
+    setJudgeList((prev) =>
+      prev.map((j) => (j.id === judgeId ? { ...j, name: editJudgeName } : j))
+    );
+    setEditingJudgeId(null);
+  }
+
+  async function deleteJudge(judge: Judge) {
+    const confirmed = window.confirm(
+      `Delete ${judge.name}'s judge login and all their team assignments? This can't be undone.`
+    );
+    if (!confirmed) return;
+
+    const res = await fetch(`/api/admin/judges/${judge.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setJudgeList((prev) => prev.filter((j) => j.id !== judge.id));
+      setAssignmentList((prev) => prev.filter((a) => a.judge_id !== judge.id));
+      if (newJudgeId === judge.id) setNewJudgeId("");
+    } else {
+      const data = await res.json();
+      window.alert(data.error ?? "Couldn't delete this judge.");
+    }
+  }
   const [newTeamId, setNewTeamId] = useState("");
   const [waveList, setWaveList] = useState<Wave[]>(waves);
   const [now, setNow] = useState(Date.now());
@@ -681,7 +737,7 @@ export default function AdminDashboard({
             onChange={(e) => setNewJudgeId(e.target.value)}
             className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
           >
-            {judges.map((j) => (
+            {judgeList.map((j) => (
               <option key={j.id} value={j.id} className="bg-fofBlack">
                 {j.name}
               </option>
@@ -702,31 +758,91 @@ export default function AdminDashboard({
         </div>
 
         <ul className="space-y-2">
-          {judges.map((judge) => {
+          {judgeList.map((judge) => {
             const teamIds = assignmentList
               .filter((a) => a.judge_id === judge.id)
               .map((a) => a.team_id);
+            const isEditing = editingJudgeId === judge.id;
             return (
-              <li key={judge.id} className="text-sm">
-                <span className="font-display">{judge.name}</span>{" "}
-                {teamIds.length === 0 && (
-                  <span className="text-fofGunmetal">— no teams assigned</span>
+              <li key={judge.id} className="rounded border border-fofCharcoal p-2 text-sm">
+                {!isEditing ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-display">{judge.name}</span>{" "}
+                      {teamIds.length === 0 && (
+                        <span className="text-fofGunmetal">— no teams assigned</span>
+                      )}
+                      {teamIds.map((tid) => (
+                        <span
+                          key={tid}
+                          className="ml-2 inline-flex items-center gap-1 rounded bg-fofCharcoal px-2 py-0.5 font-mono text-xs"
+                        >
+                          {tid}
+                          <button
+                            onClick={() => removeAssignment(judge.id, tid)}
+                            className="text-fofRed"
+                            aria-label={`Remove ${tid} from ${judge.name}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 text-xs">
+                      <button
+                        onClick={() => startEditJudge(judge)}
+                        className="text-fofGunmetal underline"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteJudge(judge)}
+                        className="text-fofRed underline"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      value={editJudgeName}
+                      onChange={(e) => setEditJudgeName(e.target.value)}
+                      placeholder="Name"
+                      className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+                    />
+                    <input
+                      value={editJudgeUsername}
+                      onChange={(e) => setEditJudgeUsername(e.target.value)}
+                      placeholder="New username (leave blank to keep current)"
+                      className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3"
+                    />
+                    <PasswordInput
+                      value={editJudgePassword}
+                      onChange={setEditJudgePassword}
+                      placeholder="New password (leave blank to keep current)"
+                      className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-3 pr-12"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveJudgeEdit(judge.id)}
+                        disabled={judgeEditBusy}
+                        className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+                      >
+                        {judgeEditBusy ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        onClick={() => setEditingJudgeId(null)}
+                        className="tap-target rounded border border-fofGunmetal px-4 text-fofGunmetal"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {judgeEditStatus && (
+                      <p className="text-xs text-fofGunmetal">{judgeEditStatus}</p>
+                    )}
+                  </div>
                 )}
-                {teamIds.map((tid) => (
-                  <span
-                    key={tid}
-                    className="ml-2 inline-flex items-center gap-1 rounded bg-fofCharcoal px-2 py-0.5 font-mono text-xs"
-                  >
-                    {tid}
-                    <button
-                      onClick={() => removeAssignment(judge.id, tid)}
-                      className="text-fofRed"
-                      aria-label={`Remove ${tid} from ${judge.name}`}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
               </li>
             );
           })}
