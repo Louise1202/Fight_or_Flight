@@ -88,58 +88,83 @@ export default function LiveMonitor() {
       {!loaded ? (
         <p className="text-sm text-fofGunmetal">Loading live status...</p>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-6">
           {inProgress.length > 0 && (
-            <div>
+            <div className="overflow-x-auto">
               <p className="mb-1 text-xs uppercase tracking-wide text-fofGunmetal">On course</p>
-              <ul className="space-y-1">
-                {inProgress.map((r) => {
-                  const state = staleness(r.lastUpdate, now);
-                  const elapsed = r.startTime ? now - new Date(r.startTime).getTime() : 0;
-                  return (
-                    <li
-                      key={r.team.id}
-                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded border border-fofCharcoal px-3 py-2 text-sm"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span
-                          className={`h-2 w-2 shrink-0 rounded-full ${dotClass[state]}`}
-                          title={state === "fresh" ? "Recent activity" : state === "warn" ? "No scan in a while" : "Possibly stalled"}
-                        />
-                        <span className="font-display">{r.team.team_name}</span>
-                        <span className="text-fofGunmetal">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
+                    <th className="p-2"></th>
+                    <th className="p-2">Team #</th>
+                    <th className="p-2">Judge</th>
+                    <th className="p-2">Current station</th>
+                    <th className="p-2">Elapsed</th>
+                    <th className="p-2">Last scan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inProgress.map((r) => {
+                    const state = staleness(r.lastUpdate, now);
+                    const elapsed = r.startTime ? now - new Date(r.startTime).getTime() : 0;
+                    return (
+                      <tr key={r.team.id} className="border-b border-fofCharcoal">
+                        <td className="p-2">
+                          <span
+                            className={`inline-block h-2 w-2 rounded-full ${dotClass[state]}`}
+                            title={
+                              state === "fresh"
+                                ? "Recent activity"
+                                : state === "warn"
+                                ? "No scan in a while"
+                                : "Possibly stalled"
+                            }
+                          />
+                        </td>
+                        <td className="p-2 font-display">{r.team.team_name}</td>
+                        <td className="p-2 text-fofGunmetal">
                           {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
-                        </span>
-                      </span>
-                      <span className="text-fofGunmetal">
-                        {r.currentStationNumber <= 12
-                          ? `Station ${r.currentStationNumber}`
-                          : "Heading to finish"}{" "}
-                        · {formatDuration(elapsed)} · last scan {timeAgo(r.lastUpdate, now)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+                        </td>
+                        <td className="p-2 text-fofGunmetal">
+                          {r.currentStationNumber <= 12
+                            ? `Station ${r.currentStationNumber}`
+                            : "Heading to finish"}
+                        </td>
+                        <td className="p-2 text-fofGunmetal">{formatDuration(elapsed)}</td>
+                        <td className="p-2 text-fofGunmetal">{timeAgo(r.lastUpdate, now)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
           {finished.length > 0 && (
-            <div>
+            <div className="overflow-x-auto">
               <p className="mb-1 text-xs uppercase tracking-wide text-fofGunmetal">Finished</p>
-              <ul className="space-y-1">
-                {finished.map((r) => (
-                  <li
-                    key={r.team.id}
-                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded border border-fofCharcoal px-3 py-2 text-sm"
-                  >
-                    <span className="font-display">{r.team.team_name}</span>
-                    <span className="text-fofRed">
-                      {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <table className="w-full min-w-[400px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
+                    <th className="p-2">Team #</th>
+                    <th className="p-2">Judge</th>
+                    <th className="p-2">Final time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {finished.map((r) => (
+                    <tr key={r.team.id} className="border-b border-fofCharcoal">
+                      <td className="p-2 font-display">{r.team.team_name}</td>
+                      <td className="p-2 text-fofGunmetal">
+                        {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
+                      </td>
+                      <td className="p-2 text-fofRed">
+                        {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
