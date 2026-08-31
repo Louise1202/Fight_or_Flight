@@ -8,6 +8,7 @@ type LiveRow = {
   status: "finished" | "in_progress" | "not_started";
   currentStationNumber: number;
   currentStationLabel: string;
+  currentEventType: "arrive" | "leave" | null;
   finalMs: number | null;
   lastUpdate: string | null;
   startTime: string | null;
@@ -124,9 +125,20 @@ export default function LiveMonitor() {
                           {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                         </td>
                         <td className="p-2 text-fofGunmetal">
-                          {r.currentStationNumber <= 12
-                            ? `Station ${r.currentStationNumber}: ${r.currentStationLabel}`
-                            : "Heading to finish"}
+                          {r.currentStationNumber <= 12 ? (
+                            <>
+                              <span
+                                className={
+                                  r.currentEventType === "arrive" ? "text-yellow-500" : "text-green-500"
+                                }
+                              >
+                                {r.currentEventType === "arrive" ? "Running to" : "At"}
+                              </span>{" "}
+                              Station {r.currentStationNumber}: {r.currentStationLabel}
+                            </>
+                          ) : (
+                            "Running to finish"
+                          )}
                         </td>
                         <td className="p-2 text-fofGunmetal">{formatDuration(timeOnThisLeg)}</td>
                         <td className="p-2 text-fofGunmetal">{formatDuration(totalElapsed)}</td>

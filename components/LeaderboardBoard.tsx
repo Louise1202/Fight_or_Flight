@@ -103,8 +103,8 @@ export default function LeaderboardBoard({
                     <span className="text-right">
                       <span className="block text-sm text-fofGunmetal">
                         {s.currentStationNumber <= 12
-                          ? `Station ${s.currentStationNumber}: ${s.currentStationLabel}`
-                          : "Heading to finish"}
+                          ? `${s.currentEventType === "arrive" ? "Running to" : "At"} Station ${s.currentStationNumber}: ${s.currentStationLabel}`
+                          : "Running to finish"}
                       </span>
                       <span className="font-display text-lg">{formatDuration(elapsed)}</span>
                     </span>

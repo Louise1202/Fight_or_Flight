@@ -14,6 +14,10 @@ export type Standing = {
   status: "finished" | "in_progress" | "not_started";
   currentStationNumber: number;
   currentStationLabel: string;
+  /** "arrive" means they're still running toward this station; "leave"
+   * means they've arrived and are actually doing the exercise there.
+   * null when not in progress (nothing meaningful to show). */
+  currentEventType: "arrive" | "leave" | null;
   finalMs: number | null;
   lastUpdate: string | null;
   /** The real start time this team's clock actually runs from (wave's
@@ -46,6 +50,7 @@ export function computeStandings(
         status: "not_started" as const,
         currentStationNumber: 0,
         currentStationLabel: "Not started",
+        currentEventType: null,
         finalMs: null,
         lastUpdate: null,
         startTime: null,
@@ -71,6 +76,7 @@ export function computeStandings(
         status: "finished",
         currentStationNumber: 13,
         currentStationLabel: "Finished",
+        currentEventType: null,
         finalMs: rawMs != null ? rawMs + penaltySeconds * 1000 : null,
         lastUpdate: lastScan.scanned_at,
         startTime,
@@ -82,6 +88,7 @@ export function computeStandings(
       status: "in_progress",
       currentStationNumber: next.stationNumber,
       currentStationLabel: next.stationName,
+      currentEventType: next.eventType,
       finalMs: null,
       // Before the first scan, "last activity" is the heat's own start -
       // that's what the staleness check on the admin monitor should
