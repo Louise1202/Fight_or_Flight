@@ -59,7 +59,7 @@ export default function StyleGuidePage() {
       <section className="mx-auto mt-10 max-w-4xl">
         <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">03 — COMPONENTS</h2>
         <div className="mt-4 space-y-3 border border-fofCharcoal bg-fofPanel p-5">
-          <button className="tap-target w-full bg-fofRed font-display text-3xl tracking-[3px] text-fofBlack">
+          <button className="tap-target w-full btn-stamped font-display text-3xl tracking-[3px] text-fofBlack">
             CONFIRM
           </button>
           <div className="grid grid-cols-2 gap-3">

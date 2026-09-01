@@ -48,7 +48,7 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
         <button
           onClick={() => window.print()}
           disabled={!allReady}
-          className="tap-target rounded bg-fofRed px-6 font-display disabled:opacity-50"
+          className="tap-target rounded btn-stamped px-6 font-display disabled:opacity-50"
         >
           {allReady ? "Print" : "Generating..."}
         </button>

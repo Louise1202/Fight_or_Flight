@@ -101,7 +101,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="tap-target w-full rounded-md bg-fofRed font-display text-lg tracking-wide disabled:opacity-60"
+            className="tap-target w-full rounded-md btn-stamped font-display text-lg tracking-wide disabled:opacity-60"
           >
             {loading ? "Logging in..." : "Log in"}
           </button>

@@ -44,6 +44,37 @@ body {
   outline-offset: 2px;
 }
 
+/* Removes the ~300ms delay some mobile browsers add before registering
+   a tap (they wait to see if it's the start of a double-tap-to-zoom),
+   applied to every button in the app so taps feel instant. */
+button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .tap-target {
   min-height: 56px;
+}
+
+/* Stamped-metal primary button - the confirm/submit action across the
+   app. Heavier bevel than a normal raised button, closer to the patch
+   badge's hardware feel. Presses down visibly on tap for instant
+   feedback, independent of how long the actual save takes. */
+.btn-stamped {
+  background: linear-gradient(160deg, #f14149 0%, #e8262d 50%, #a81d22 100%);
+  border: 1px solid #6e1013;
+  box-shadow:
+    0 3px 0 #6e1013,
+    0 5px 8px rgba(0, 0, 0, 0.6),
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-stamped:active {
+  transform: translateY(2px);
+  box-shadow:
+    0 1px 0 #6e1013,
+    0 2px 3px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.2),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.3);
 }

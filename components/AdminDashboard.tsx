@@ -460,7 +460,7 @@ export default function AdminDashboard({
           <button
             type="submit"
             disabled={importing}
-            className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+            className="tap-target rounded btn-stamped px-4 font-display disabled:opacity-50"
           >
             {importing ? "Importing..." : "Import"}
           </button>
@@ -536,7 +536,7 @@ export default function AdminDashboard({
                   <button
                     onClick={() => startHeat(w.wave_number)}
                     disabled={busy}
-                    className="tap-target mt-3 w-full rounded bg-fofRed font-display disabled:opacity-50"
+                    className="tap-target mt-3 w-full rounded btn-stamped font-display disabled:opacity-50"
                   >
                     {busy ? "Starting..." : `Start Heat ${w.wave_number}`}
                   </button>
@@ -745,7 +745,7 @@ export default function AdminDashboard({
             <button
               type="submit"
               disabled={creatingJudge}
-              className="tap-target w-full rounded bg-fofRed font-display disabled:opacity-50"
+              className="tap-target w-full rounded btn-stamped font-display disabled:opacity-50"
             >
               {creatingJudge ? "Creating..." : "Create judge login"}
             </button>
@@ -787,7 +787,7 @@ export default function AdminDashboard({
             <button
               type="submit"
               disabled={creatingViewer}
-              className="tap-target w-full rounded bg-fofRed font-display disabled:opacity-50"
+              className="tap-target w-full rounded btn-stamped font-display disabled:opacity-50"
             >
               {creatingViewer ? "Creating..." : "Create team login"}
             </button>
@@ -896,7 +896,7 @@ export default function AdminDashboard({
                       <button
                         onClick={() => saveJudgeEdit(judge.id)}
                         disabled={judgeEditBusy}
-                        className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+                        className="tap-target rounded btn-stamped px-4 font-display disabled:opacity-50"
                       >
                         {judgeEditBusy ? "Saving..." : "Save"}
                       </button>
@@ -985,7 +985,7 @@ export default function AdminDashboard({
               <button
                 onClick={runReset}
                 disabled={resetConfirmText !== "RESET" || resetting}
-                className="tap-target rounded bg-fofRed px-4 font-display disabled:opacity-50"
+                className="tap-target rounded btn-stamped px-4 font-display disabled:opacity-50"
               >
                 {resetting ? "Resetting..." : "Confirm"}
               </button>

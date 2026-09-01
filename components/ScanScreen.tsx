@@ -412,7 +412,7 @@ export default function ScanScreen({
             <button
               onClick={() => recordScan(next.stationNumber, next.eventType)}
               disabled={submitting}
-              className="tap-target mt-4 w-full rounded-md bg-fofRed font-display text-lg disabled:opacity-50"
+              className="tap-target mt-4 w-full rounded-md btn-stamped font-display text-lg disabled:opacity-50"
             >
               {submitting ? "Recording..." : "Confirm"}
             </button>

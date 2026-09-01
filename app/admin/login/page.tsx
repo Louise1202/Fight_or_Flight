@@ -59,7 +59,7 @@ export default function AdminLoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="tap-target w-full rounded-md bg-fofRed font-display"
+            className="tap-target w-full rounded-md btn-stamped font-display"
           >
             {loading ? "Checking..." : "Enter"}
           </button>

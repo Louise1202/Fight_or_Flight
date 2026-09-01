@@ -292,7 +292,7 @@ export default function TeamCard({
               <button
                 onClick={confirm}
                 disabled={submitting}
-                className="tap-target flex-1 rounded-md bg-fofRed font-display disabled:opacity-50"
+                className="tap-target flex-1 rounded-md btn-stamped font-display disabled:opacity-50"
               >
                 {submitting ? "..." : "Confirm"}
               </button>
