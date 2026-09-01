@@ -429,7 +429,7 @@ export default function AdminDashboard({
       </div>
 
       <section className="mb-10 rounded border border-fofCharcoal p-4">
-        <h2 className="mb-2 font-display text-lg">Import from Excel</h2>
+        <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Import from Excel</h2>
         <p className="mb-3 text-sm text-fofGunmetal">
           Upload a workbook matching the original Race HQ format (a{" "}
           <span className="font-mono">Teams</span> sheet with Team ID, Team
@@ -469,7 +469,7 @@ export default function AdminDashboard({
       </section>
 
       <section className="mb-10">
-        <h2 className="mb-2 font-display text-lg">Race day control</h2>
+        <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Race day control</h2>
         <p className="mb-3 text-sm text-fofGunmetal">
           Nothing is timed until you start a heat here — the moment you do,
           every judge in that heat sees their clock start on their phone.
@@ -614,18 +614,18 @@ export default function AdminDashboard({
       <LiveMonitor />
 
       <section className="mb-10 overflow-x-auto">
-        <h2 className="mb-2 font-display text-lg">Teams</h2>
+        <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Teams</h2>
         <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
               <th className="p-2">ID</th>
-              <th className="p-2">Team name</th>
+              <th className="p-2">Team Name</th>
               <th className="p-2">Athlete 1</th>
               <th className="p-2">Athlete 2</th>
               <th className="p-2">Division</th>
               <th className="p-2">Heat</th>
               <th className="p-2">Progress</th>
-              <th className="p-2">Viewer login</th>
+              <th className="p-2">Viewer Login</th>
               <th className="p-2"></th>
             </tr>
           </thead>
@@ -705,7 +705,7 @@ export default function AdminDashboard({
 
       <section className="mb-10 grid gap-8 md:grid-cols-2">
         <div>
-          <h2 className="mb-2 font-display text-lg">Create a judge login</h2>
+          <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Create a judge login</h2>
           <form onSubmit={createJudge} className="space-y-2 rounded border border-fofCharcoal p-4">
             <input
               placeholder="Judge's name (e.g. Nicolene)"
@@ -756,7 +756,7 @@ export default function AdminDashboard({
         </div>
 
         <div>
-          <h2 className="mb-2 font-display text-lg">Create a team login</h2>
+          <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Create a team login</h2>
           <form onSubmit={createViewer} className="space-y-2 rounded border border-fofCharcoal p-4">
             <select
               value={viewerTeamId}
@@ -799,7 +799,7 @@ export default function AdminDashboard({
       </section>
 
       <section>
-        <h2 className="mb-2 font-display text-lg">Judges &amp; assignments</h2>
+        <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Judges &amp; assignments</h2>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <select
             value={newJudgeId}

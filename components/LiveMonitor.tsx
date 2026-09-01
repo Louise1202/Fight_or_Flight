@@ -112,7 +112,7 @@ export default function LiveMonitor() {
         <div className="space-y-6">
           {inProgress.length > 0 && (
             <div>
-              <p className="mb-1 text-xs uppercase tracking-wide text-fofGunmetal">On course</p>
+              <p className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg uppercase tracking-wide text-fofPaper">On course</p>
 
               {/* Phone: stacked cards, one per team */}
               <div className="space-y-2 md:hidden">
@@ -152,9 +152,9 @@ export default function LiveMonitor() {
                       <th className="p-2"></th>
                       <th className="p-2">Team #</th>
                       <th className="p-2">Judge</th>
-                      <th className="p-2">Current station</th>
-                      <th className="p-2">Time here</th>
-                      <th className="p-2">Total time</th>
+                      <th className="p-2">Current Station</th>
+                      <th className="p-2">Time Here</th>
+                      <th className="p-2">Total Time</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -190,7 +190,7 @@ export default function LiveMonitor() {
 
           {finished.length > 0 && (
             <div>
-              <p className="mb-1 text-xs uppercase tracking-wide text-fofGunmetal">Finished</p>
+              <p className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg uppercase tracking-wide text-fofPaper">Finished</p>
 
               {/* Phone: stacked cards showing the full breakdown */}
               <div className="space-y-2 md:hidden">
@@ -221,9 +221,9 @@ export default function LiveMonitor() {
                     <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
                       <th className="p-2">Team #</th>
                       <th className="p-2">Judge</th>
-                      <th className="p-2">Finish time</th>
+                      <th className="p-2">Finish Time</th>
                       <th className="p-2">Penalties</th>
-                      <th className="p-2">Final time</th>
+                      <th className="p-2">Final Time</th>
                     </tr>
                   </thead>
                   <tbody>
