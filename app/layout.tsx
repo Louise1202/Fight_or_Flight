@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Staatliches, Barlow_Semi_Condensed, IBM_Plex_Mono } from "next/font/google";
+import { Staatliches, Barlow_Semi_Condensed, IBM_Plex_Mono, Permanent_Marker } from "next/font/google";
 import "./globals.css";
 
 // Staatliches: condensed poster caps with slightly cut, irregular terminals -
@@ -26,6 +26,16 @@ const plexMono = IBM_Plex_Mono({
   variable: "--font-mono",
 });
 
+// Permanent Marker: rough, hand-scratched look - closer to the patch's
+// actual distressed lettering than Staatliches. Used sparingly (just the
+// "CONGRATULATIONS!" arc on a finished team's page), not as a general
+// display face.
+const permanentMarker = Permanent_Marker({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-marker",
+});
+
 export const metadata: Metadata = {
   title: "Fight or Flight — Race Timing",
   description: "Live race timing for the Fight or Flight team event",
@@ -43,7 +53,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${staatliches.variable} ${barlow.variable} ${plexMono.variable}`}
+      className={`${staatliches.variable} ${barlow.variable} ${plexMono.variable} ${permanentMarker.variable}`}
     >
       <body className="ground min-h-screen bg-fofBlack text-fofPaper font-body antialiased">
         {children}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { buildSplits, buildLegs, formatDuration, getNextAction, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
+import { CONGRATS_MESSAGES } from "@/lib/congratsMessages";
 import LogoutButton from "./LogoutButton";
 
 type Team = {
@@ -32,6 +33,11 @@ export default function TeamResults({
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
   const [wave, setWave] = useState<Wave | null>(initialWave);
   const [now, setNow] = useState(Date.now());
+  // Picked once on load (not on every re-render/tick) so it doesn't
+  // change while the team is looking at their own results.
+  const [congratsLine] = useState(
+    () => CONGRATS_MESSAGES[Math.floor(Math.random() * CONGRATS_MESSAGES.length)]
+  );
 
   useEffect(() => {
     const channel = supabase
@@ -107,6 +113,29 @@ export default function TeamResults({
 
   return (
     <main className="mx-auto max-w-md px-4 py-6">
+      {finalMs != null && (
+        <div className="relative mx-auto mb-2 mt-4" style={{ width: 260 }}>
+          <svg
+            viewBox="0 0 260 100"
+            className="absolute -top-3 left-0 z-10 h-[100px] w-[260px] overflow-visible"
+            xmlns="http://www.w3.org/2000/svg"
+            xmlnsXlink="http://www.w3.org/1999/xlink"
+          >
+            <path id="congratsArc" d="M 12,92 A 118 118 0 0 1 248,92" fill="none" />
+            <text className="font-marker fill-fofRed text-2xl tracking-wide">
+              <textPath xlinkHref="#congratsArc" href="#congratsArc" startOffset="50%" textAnchor="middle">
+                CONGRATULATIONS!
+              </textPath>
+            </text>
+          </svg>
+          <img
+            src="/logo.png"
+            alt="Fight or Flight"
+            className="relative z-0 mx-auto h-[200px] w-[200px] rounded-full"
+          />
+        </div>
+      )}
+
       <header className="mb-4 flex items-start justify-between">
         <div>
           <h1 className="font-display text-2xl">{team.team_name}</h1>
@@ -117,6 +146,12 @@ export default function TeamResults({
         </div>
         <LogoutButton />
       </header>
+
+      {finalMs != null && (
+        <p className="mb-4 text-center font-display text-lg text-fofPaper">
+          {congratsLine}
+        </p>
+      )}
 
       {!started ? (
         <section className="rounded-lg border-2 border-fofGunmetal p-6 text-center">
