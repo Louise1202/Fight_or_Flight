@@ -94,7 +94,7 @@ export default function AdminDashboard({
       window.alert(data.error ?? "Couldn't delete this judge.");
     }
   }
-  const [newTeamId, setNewTeamId] = useState("");
+  const [newTeamIds, setNewTeamIds] = useState<string[]>([]);
   const [waveList, setWaveList] = useState<Wave[]>(waves);
   const [now, setNow] = useState(Date.now());
 
@@ -305,16 +305,26 @@ export default function AdminDashboard({
   }
 
   async function addAssignment() {
-    if (!newJudgeId || !newTeamId) return;
-    const res = await fetch("/api/admin/assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ judge_id: newJudgeId, team_id: newTeamId.trim() }),
-    });
-    if (res.ok) {
-      setAssignmentList((prev) => [...prev, { judge_id: newJudgeId, team_id: newTeamId.trim() }]);
-      setNewTeamId("");
+    if (!newJudgeId || newTeamIds.length === 0) return;
+    const added: Assignment[] = [];
+    for (const teamId of newTeamIds) {
+      const res = await fetch("/api/admin/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ judge_id: newJudgeId, team_id: teamId }),
+      });
+      if (res.ok) added.push({ judge_id: newJudgeId, team_id: teamId });
     }
+    if (added.length > 0) {
+      setAssignmentList((prev) => [...prev, ...added]);
+    }
+    setNewTeamIds([]);
+  }
+
+  function toggleNewTeamId(teamId: string) {
+    setNewTeamIds((prev) =>
+      prev.includes(teamId) ? prev.filter((t) => t !== teamId) : [...prev, teamId]
+    );
   }
 
   async function removeAssignment(judge_id: string, team_id: string) {
@@ -800,7 +810,7 @@ export default function AdminDashboard({
 
       <section>
         <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Judges &amp; assignments</h2>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-start gap-2">
           <select
             value={newJudgeId}
             onChange={(e) => setNewJudgeId(e.target.value)}
@@ -812,15 +822,31 @@ export default function AdminDashboard({
               </option>
             ))}
           </select>
-          <input
-            placeholder="Team ID (e.g. FF073001)"
-            value={newTeamId}
-            onChange={(e) => setNewTeamId(e.target.value.toUpperCase())}
-            className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
-          />
+
+          <details className="rounded border border-fofGunmetal px-2 py-1">
+            <summary className="cursor-pointer select-none">
+              {newTeamIds.length === 0
+                ? "Select teams..."
+                : `${newTeamIds.length} team${newTeamIds.length > 1 ? "s" : ""} selected`}
+            </summary>
+            <div className="mt-2 max-h-48 w-56 overflow-y-auto border-t border-fofCharcoal pt-2 text-sm">
+              {teams.map((t) => (
+                <label key={t.id} className="flex items-center gap-2 py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={newTeamIds.includes(t.id)}
+                    onChange={() => toggleNewTeamId(t.id)}
+                  />
+                  {t.id} — {t.team_name}
+                </label>
+              ))}
+            </div>
+          </details>
+
           <button
             onClick={addAssignment}
-            className="rounded border border-fofRed px-3 py-1 text-fofRed"
+            disabled={newTeamIds.length === 0}
+            className="rounded border border-fofRed px-3 py-1 text-fofRed disabled:opacity-50"
           >
             Assign
           </button>
