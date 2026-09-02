@@ -342,7 +342,7 @@ export default function ScanScreen({
           </p>
           <p className="mt-2 font-display text-xl">Waiting for the admin to start</p>
           <p className="mt-2 text-xs text-fofGunmetal">
-            Your clock and Confirm button appear the instant it starts — no
+            Your clock and Confirm button appear the instant it starts - no
             need to refresh.
           </p>
         </section>
@@ -357,7 +357,7 @@ export default function ScanScreen({
                 ? formatDuration(
                     new Date(wave.actual_end).getTime() - new Date(startTime).getTime()
                   )
-                : "—"}
+                : "-"}
             </p>
             <p className="mt-2 text-xs text-fofGunmetal">
               Scanning is closed for this heat. Contact the race organizer if

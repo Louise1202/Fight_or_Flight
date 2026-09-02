@@ -414,7 +414,7 @@ export default function AdminDashboard({
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="font-display text-2xl text-fofRed">RACE HQ — ADMIN</h1>
+        <h1 className="font-display text-2xl text-fofRed">RACE HQ - ADMIN</h1>
         <a
           href="/api/admin/export"
           className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
@@ -481,7 +481,7 @@ export default function AdminDashboard({
       <section className="mb-10">
         <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Race day control</h2>
         <p className="mb-3 text-sm text-fofGunmetal">
-          Nothing is timed until you start a heat here — the moment you do,
+          Nothing is timed until you start a heat here - the moment you do,
           every judge in that heat sees their clock start on their phone.
           A heat closes itself automatically once every team in it has
           finished; use "End heat" only if a team DNFs and will never cross
@@ -748,7 +748,7 @@ export default function AdminDashboard({
                     checked={judgeTeamIds.includes(t.id)}
                     onChange={() => toggleJudgeTeam(t.id)}
                   />
-                  {t.id} — {t.team_name}
+                  {t.id} - {t.team_name}
                 </label>
               ))}
             </div>
@@ -775,7 +775,7 @@ export default function AdminDashboard({
             >
               {teams.map((t) => (
                 <option key={t.id} value={t.id} className="bg-fofBlack">
-                  {t.id} — {t.team_name} {teamsWithViewer.includes(t.id) ? "(already has one)" : ""}
+                  {t.id} - {t.team_name} {teamsWithViewer.includes(t.id) ? "(already has one)" : ""}
                 </option>
               ))}
             </select>
@@ -837,7 +837,7 @@ export default function AdminDashboard({
                     checked={newTeamIds.includes(t.id)}
                     onChange={() => toggleNewTeamId(t.id)}
                   />
-                  {t.id} — {t.team_name}
+                  {t.id} - {t.team_name}
                 </label>
               ))}
             </div>
@@ -865,7 +865,7 @@ export default function AdminDashboard({
                     <div>
                       <span className="font-display">{judge.name}</span>{" "}
                       {teamIds.length === 0 && (
-                        <span className="text-fofGunmetal">— no teams assigned</span>
+                        <span className="text-fofGunmetal"> - no teams assigned</span>
                       )}
                       {teamIds.map((tid) => (
                         <span

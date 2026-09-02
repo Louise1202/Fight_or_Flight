@@ -50,7 +50,7 @@ export function getNextAction(scans: Scan[]): NextAction {
       stationNumber: station.number,
       stationName: station.name,
       eventType: "arrive",
-      label: `Arrive — Station 1: ${station.name}`,
+      label: `Arrive - Station 1: ${station.name}`,
       isFinished: false,
     };
   }
@@ -71,7 +71,7 @@ export function getNextAction(scans: Scan[]): NextAction {
       stationNumber: station.number,
       stationName: station.name,
       eventType: "leave",
-      label: `Leave — Station ${station.number}: ${station.name}`,
+      label: `Leave - Station ${station.number}: ${station.name}`,
       isFinished: false,
     };
   }
@@ -85,7 +85,7 @@ export function getNextAction(scans: Scan[]): NextAction {
     label:
       nextStation.number === 13
         ? "Scan at the FINISH line"
-        : `Arrive — Station ${nextStation.number}: ${nextStation.name}`,
+        : `Arrive - Station ${nextStation.number}: ${nextStation.name}`,
     isFinished: false,
   };
 }

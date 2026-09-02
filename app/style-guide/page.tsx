@@ -10,9 +10,9 @@ const SWATCHES = [
 ];
 
 const TYPE = [
-  { name: "font-display — Staatliches", sample: "BRAVO COMPANY", cls: "font-display text-5xl tracking-wide", note: "Headings, team names, buttons. CAPS only, never below 19px." },
-  { name: "font-body — Barlow Semi Condensed", sample: "Station 04 — Sandbag Carry · Judge: M. Okafor", cls: "font-body text-xl", note: "Labels, dense info, everything else. Min 13px." },
-  { name: "font-mono — IBM Plex Mono", sample: "00:04:12.8", cls: "nums text-3xl font-semibold", note: "Every time, split, position and count. tabular-nums." },
+  { name: "font-display - Staatliches", sample: "BRAVO COMPANY", cls: "font-display text-5xl tracking-wide", note: "Headings, team names, buttons. CAPS only, never below 19px." },
+  { name: "font-body - Barlow Semi Condensed", sample: "Station 04 - Sandbag Carry · Judge: M. Okafor", cls: "font-body text-xl", note: "Labels, dense info, everything else. Min 13px." },
+  { name: "font-mono - IBM Plex Mono", sample: "00:04:12.8", cls: "nums text-3xl font-semibold", note: "Every time, split, position and count. tabular-nums." },
 ];
 
 export default function StyleGuidePage() {
@@ -29,7 +29,7 @@ export default function StyleGuidePage() {
       </header>
 
       <section className="mx-auto mt-10 max-w-4xl">
-        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">01 — PALETTE</h2>
+        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">01 - PALETTE</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SWATCHES.map((s) => (
             <div key={s.token} className="border border-fofCharcoal bg-fofPanel p-4">
@@ -44,7 +44,7 @@ export default function StyleGuidePage() {
       </section>
 
       <section className="mx-auto mt-10 max-w-4xl">
-        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">02 — TYPE</h2>
+        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">02 - TYPE</h2>
         <div className="mt-4 divide-y divide-fofCharcoal border border-fofCharcoal bg-fofPanel">
           {TYPE.map((t) => (
             <div key={t.name} className="p-5">
@@ -57,7 +57,7 @@ export default function StyleGuidePage() {
       </section>
 
       <section className="mx-auto mt-10 max-w-4xl">
-        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">03 — COMPONENTS</h2>
+        <h2 className="nums text-[11px] tracking-[2px] text-fofGunmetal">03 - COMPONENTS</h2>
         <div className="mt-4 space-y-3 border border-fofCharcoal bg-fofPanel p-5">
           <button className="tap-target w-full btn-stamped font-display text-3xl tracking-[3px] text-fofBlack">
             CONFIRM

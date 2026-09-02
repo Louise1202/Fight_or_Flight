@@ -41,7 +41,7 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
           </Link>
           <h1 className="font-display text-2xl">Team QR codes</h1>
           <p className="text-sm text-fofGunmetal">
-            {teams.length} teams — each code just encodes the team ID (e.g.{" "}
+            {teams.length} teams - each code just encodes the team ID (e.g.{" "}
             {teams[0]?.id}), nothing else.
           </p>
         </div>

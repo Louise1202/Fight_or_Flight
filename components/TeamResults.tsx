@@ -221,7 +221,7 @@ export default function TeamResults({
               <li key={i} className="flex justify-between">
                 <span>
                   Station {p.station_number}
-                  {p.notes ? ` — ${p.notes}` : ""}
+                  {p.notes ? ` - ${p.notes}` : ""}
                 </span>
                 <span className="text-fofRed">+{p.penalty_seconds}s</span>
               </li>

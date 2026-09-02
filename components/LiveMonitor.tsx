@@ -204,11 +204,11 @@ export default function LiveMonitor() {
                     </div>
                     <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
                     <div className="mt-2 flex justify-between text-xs text-fofGunmetal">
-                      <span>Finish: {r.rawMs != null ? formatDuration(r.rawMs) : "—"}</span>
+                      <span>Finish: {r.rawMs != null ? formatDuration(r.rawMs) : "-"}</span>
                       <span>Penalty: +{r.penaltySeconds}s</span>
                     </div>
                     <p className="mt-1 text-right font-display text-fofRed">
-                      {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
+                      {r.finalMs != null ? formatDuration(r.finalMs) : "-"}
                     </p>
                   </div>
                 ))}
@@ -237,11 +237,11 @@ export default function LiveMonitor() {
                           {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
                         </td>
                         <td className="p-2 text-fofGunmetal">
-                          {r.rawMs != null ? formatDuration(r.rawMs) : "—"}
+                          {r.rawMs != null ? formatDuration(r.rawMs) : "-"}
                         </td>
                         <td className="p-2 text-fofGunmetal">+{r.penaltySeconds}s</td>
                         <td className="p-2 font-display text-fofRed">
-                          {r.finalMs != null ? formatDuration(r.finalMs) : "—"}
+                          {r.finalMs != null ? formatDuration(r.finalMs) : "-"}
                         </td>
                       </tr>
                     ))}

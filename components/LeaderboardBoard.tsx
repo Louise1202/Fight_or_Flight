@@ -121,7 +121,7 @@ export default function LeaderboardBoard({
             <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm text-fofGunmetal sm:grid-cols-3">
               {notStarted.map((s) => (
                 <li key={s.team.id}>
-                  {s.team.team_name} — Heat {s.team.wave}
+                  {s.team.team_name} - Heat {s.team.wave}
                 </li>
               ))}
             </ul>
