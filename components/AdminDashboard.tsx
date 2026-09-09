@@ -37,22 +37,39 @@ export default function AdminDashboard({
   waves: Wave[];
   initialTheme: "dark" | "light";
 }) {
-  const theme = useSharedTheme(initialTheme);
+  const syncedTheme = useSharedTheme(initialTheme);
+  const [themeOverride, setThemeOverride] = useState<"dark" | "light" | null>(null);
+  const theme = themeOverride ?? syncedTheme;
   const [togglingTheme, setTogglingTheme] = useState(false);
+  const [themeError, setThemeError] = useState<string | null>(null);
+
+  // Once the shared (DB-backed) value catches up to what we set locally,
+  // drop the override and go back to trusting the synced value directly -
+  // this is just for instant feedback on the admin's own click, not a
+  // permanent second source of truth.
+  useEffect(() => {
+    if (themeOverride && syncedTheme === themeOverride) setThemeOverride(null);
+  }, [syncedTheme, themeOverride]);
 
   async function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setThemeOverride(next); // instant flip on THIS screen, regardless of Realtime/RLS
+    setThemeError(null);
     setTogglingTheme(true);
     try {
-      await fetch("/api/admin/settings/theme", {
+      const res = await fetch("/api/admin/settings/theme", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme: theme === "dark" ? "light" : "dark" }),
+        body: JSON.stringify({ theme: next }),
       });
-      // No local setTheme call here on purpose - the Realtime
-      // subscription inside useSharedTheme picks up this same write
-      // (echoed back over the same channel judges use) and updates the
-      // screen, so admin and judges are always looking at one shared
-      // value rather than two that could drift apart.
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setThemeError(body?.error ?? "Couldn't save - try again.");
+        setThemeOverride(null); // revert the optimistic flip, it didn't actually stick
+      }
+    } catch {
+      setThemeError("Couldn't reach the server - check your connection.");
+      setThemeOverride(null);
     } finally {
       setTogglingTheme(false);
     }
@@ -449,6 +466,7 @@ export default function AdminDashboard({
         >
           {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
         </button>
+        {themeError && <span className="text-xs text-fofRed">{themeError}</span>}
         <a
           href="/api/admin/export"
           className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"

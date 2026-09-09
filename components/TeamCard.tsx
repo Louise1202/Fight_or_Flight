@@ -68,12 +68,14 @@ function newScanId(): string {
   );
 }
 
-// queued_at exists only for this phone's own local ordering/display - it
-// is NOT a column in the scans table, and must never be sent to the
-// database. Both places that insert a scan go through this helper.
+// queued_at is this phone's own record of exactly when the judge tapped
+// Confirm - it must reach the database as scanned_at, or a scan queued
+// offline and synced later gets stamped at sync time instead of the
+// real moment it happened. Both places that insert a scan go through
+// this helper.
 function toScanInsert(p: PendingScan) {
-  const { queued_at, ...dbFields } = p;
-  return dbFields;
+  const { queued_at, ...rest } = p;
+  return { ...rest, scanned_at: queued_at };
 }
 
 export default function TeamCard({

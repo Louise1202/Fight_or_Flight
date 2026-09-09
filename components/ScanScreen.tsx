@@ -28,13 +28,14 @@ type PendingScan = {
   queued_at: string;
 };
 
-// queued_at exists only for this phone's own local ordering/display - it
-// is NOT a column in the scans table, and must never be sent to the
-// database. Every insert goes through this helper so that mistake can't
-// silently creep back in at a second call site.
+// queued_at is this phone's own record of exactly when the judge tapped
+// Confirm - not a column in the scans table by that name, but it MUST
+// still reach the database, as scanned_at, or a scan queued offline and
+// synced minutes (or hours) later would get stamped with the sync time
+// instead of the real moment it happened, throwing off every split after it.
 function toScanInsert(p: PendingScan) {
-  const { queued_at, ...dbFields } = p;
-  return dbFields;
+  const { queued_at, ...rest } = p;
+  return { ...rest, scanned_at: queued_at };
 }
 
 function queueKey(teamId: string) {
