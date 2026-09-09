@@ -1,5 +1,5 @@
 import { buildSplits, getNextAction, Scan } from "./timing";
-import { effectiveStartTime, hasWaveStarted, Wave } from "./waves";
+import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "./waves";
 
 export type TeamRow = {
   id: string;
@@ -9,11 +9,12 @@ export type TeamRow = {
   division: string | null;
   wave: number | null;
   start_time: string;
+  stopped_note?: string | null;
 };
 
 export type Standing = {
   team: TeamRow;
-  status: "finished" | "in_progress" | "not_started";
+  status: "finished" | "in_progress" | "stopped" | "not_started";
   currentStationNumber: number;
   currentStationLabel: string;
   /** "arrive" means they're still running toward this station; "leave"
@@ -34,6 +35,14 @@ export type Standing = {
    * actual_start once the admin has started that heat) - null if the
    * heat hasn't started yet, so there's nothing to count from. */
   startTime: string | null;
+  /** Set only when status is "stopped" - the moment the heat actually
+   * ended. The frontend must diff against THIS, not the live clock, or
+   * a stopped team's time keeps climbing forever even though nothing
+   * is actually happening anymore. */
+  stoppedAt: string | null;
+  /** The judge's free-text note on exactly where the team was when the
+   * heat ended, if one was saved. */
+  stoppedNote: string | null;
 };
 
 export function computeStandings(
@@ -66,6 +75,8 @@ export function computeStandings(
         finalMs: null,
         lastUpdate: null,
         startTime: null,
+        stoppedAt: null,
+        stoppedNote: null,
       };
     }
 
@@ -94,6 +105,28 @@ export function computeStandings(
         finalMs: rawMs != null ? rawMs + penaltySeconds * 1000 : null,
         lastUpdate: lastScan.scanned_at,
         startTime,
+        stoppedAt: null,
+        stoppedNote: null,
+      };
+    }
+
+    // The heat ended (auto-timeout, or the admin manually ended it) before
+    // this team ever reached the finish line - frozen exactly where they
+    // were, not still "in progress" against the live clock.
+    if (hasWaveEnded(wave)) {
+      return {
+        team,
+        status: "stopped",
+        currentStationNumber: next.stationNumber,
+        currentStationLabel: next.stationName,
+        currentEventType: next.eventType,
+        rawMs: null,
+        penaltySeconds,
+        finalMs: null,
+        lastUpdate: lastScan ? lastScan.scanned_at : startTime,
+        startTime,
+        stoppedAt: wave!.actual_end,
+        stoppedNote: team.stopped_note ?? null,
       };
     }
 
@@ -112,6 +145,8 @@ export function computeStandings(
       // logged yet), rather than having nothing to compare against.
       lastUpdate: lastScan ? lastScan.scanned_at : startTime,
       startTime,
+      stoppedAt: null,
+      stoppedNote: null,
     };
   });
 
@@ -128,6 +163,10 @@ export function computeStandings(
       return new Date(a.lastUpdate!).getTime() - new Date(b.lastUpdate!).getTime();
     });
 
+  const stopped = standings
+    .filter((s) => s.status === "stopped")
+    .sort((a, b) => b.currentStationNumber - a.currentStationNumber);
+
   const notStarted = standings
     .filter((s) => s.status === "not_started")
     .sort((a, b) => {
@@ -138,5 +177,5 @@ export function computeStandings(
       return timeA - timeB;
     });
 
-  return [...finished, ...inProgress, ...notStarted];
+  return [...finished, ...inProgress, ...stopped, ...notStarted];
 }

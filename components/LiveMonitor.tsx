@@ -13,7 +13,7 @@ type LiveRow = {
     wave: number | null;
     start_time: string;
   };
-  status: "finished" | "in_progress" | "not_started";
+  status: "finished" | "in_progress" | "stopped" | "not_started";
   currentStationNumber: number;
   currentStationLabel: string;
   currentEventType: "arrive" | "leave" | null;
@@ -22,10 +22,12 @@ type LiveRow = {
   finalMs: number | null;
   lastUpdate: string | null;
   startTime: string | null;
+  stoppedAt: string | null;
+  stoppedNote: string | null;
   judgeNames: string[];
 };
 
-type Counts = { finished: number; inProgress: number; notStarted: number; total: number };
+type Counts = { finished: number; inProgress: number; stopped: number; notStarted: number; total: number };
 
 function staleness(lastUpdate: string | null, now: number): "fresh" | "warn" | "stale" {
   if (!lastUpdate) return "fresh";
@@ -93,6 +95,7 @@ export default function LiveMonitor() {
   }, []);
 
   const inProgress = rows.filter((r) => r.status === "in_progress");
+  const stopped = rows.filter((r) => r.status === "stopped");
   const finished = rows.filter((r) => r.status === "finished");
 
   return (
@@ -101,7 +104,7 @@ export default function LiveMonitor() {
         <h2 className="font-display text-lg">Live race monitor</h2>
         {counts && (
           <p className="text-sm text-fofGunmetal">
-            {counts.finished} finished · {counts.inProgress} racing · {counts.notStarted} not started
+            {counts.finished} finished · {counts.inProgress} racing · {counts.stopped} stopped · {counts.notStarted} not started
           </p>
         )}
       </div>
@@ -188,6 +191,86 @@ export default function LiveMonitor() {
             </div>
           )}
 
+          {stopped.length > 0 && (
+            <div>
+              <p className="mb-3 border-t-2 border-fofGunmetal pt-4 font-display text-lg uppercase tracking-wide text-fofPaper">
+                Stopped (heat ended)
+              </p>
+
+              {/* Phone: stacked cards */}
+              <div className="space-y-2 md:hidden">
+                {stopped.map((r) => {
+                  const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
+                  const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
+                  const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
+                  return (
+                    <div key={r.team.id} className="rounded border border-fofGunmetal p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-display">{r.team.team_name}</span>
+                        <span className="text-xs text-fofGunmetal">
+                          {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                      <p className="mt-1 text-fofGunmetal">
+                        <StationText row={r} />
+                      </p>
+                      <div className="mt-2 flex justify-between text-xs text-fofGunmetal">
+                        <span>Here: {formatDuration(timeOnThisLeg)}</span>
+                        <span>Total: {formatDuration(totalElapsed)}</span>
+                      </div>
+                      {r.stoppedNote && (
+                        <p className="mt-2 rounded bg-fofCharcoal px-2 py-1 text-xs text-fofPaper">
+                          "{r.stoppedNote}"
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop/tablet: full table */}
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[720px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
+                      <th className="p-2">Team #</th>
+                      <th className="p-2">Judge</th>
+                      <th className="p-2">Stopped At</th>
+                      <th className="p-2">Time Here</th>
+                      <th className="p-2">Total Time</th>
+                      <th className="p-2">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stopped.map((r) => {
+                      const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
+                      const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
+                      const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
+                      return (
+                        <tr key={r.team.id} className="border-b border-fofCharcoal">
+                          <td className="p-2">
+                            <p className="font-display">{r.team.team_name}</p>
+                            <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                          </td>
+                          <td className="p-2 text-fofGunmetal">
+                            {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
+                          </td>
+                          <td className="p-2 text-fofGunmetal">
+                            <StationText row={r} />
+                          </td>
+                          <td className="p-2 text-fofGunmetal">{formatDuration(timeOnThisLeg)}</td>
+                          <td className="p-2 text-fofGunmetal">{formatDuration(totalElapsed)}</td>
+                          <td className="p-2 text-fofGunmetal">{r.stoppedNote ?? "-"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {finished.length > 0 && (
             <div>
               <p className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg uppercase tracking-wide text-fofPaper">Finished</p>
@@ -251,7 +334,7 @@ export default function LiveMonitor() {
             </div>
           )}
 
-          {inProgress.length === 0 && finished.length === 0 && (
+          {inProgress.length === 0 && stopped.length === 0 && finished.length === 0 && (
             <p className="text-sm text-fofGunmetal">No teams have started yet.</p>
           )}
         </div>

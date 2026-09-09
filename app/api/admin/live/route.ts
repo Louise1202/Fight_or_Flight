@@ -14,7 +14,7 @@ export async function GET() {
 
   const [{ data: teams }, { data: scans }, { data: penalties }, { data: judges }, { data: assignments }, { data: waves }] =
     await Promise.all([
-      admin.from("teams").select("id, team_name, athlete_1, athlete_2, division, wave, start_time"),
+      admin.from("teams").select("id, team_name, athlete_1, athlete_2, division, wave, start_time, stopped_note"),
       admin.from("scans").select("team_id, station_number, event_type, scanned_at"),
       admin.from("penalties").select("team_id, penalty_seconds"),
       admin.from("judges").select("id, name"),
@@ -60,6 +60,7 @@ export async function GET() {
   const counts = {
     finished: enriched.filter((s) => s.status === "finished").length,
     inProgress: enriched.filter((s) => s.status === "in_progress").length,
+    stopped: enriched.filter((s) => s.status === "stopped").length,
     notStarted: enriched.filter((s) => s.status === "not_started").length,
     total: enriched.length,
   };

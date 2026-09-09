@@ -172,12 +172,23 @@ export default function ScanScreen({
 
   async function saveStoppedNote() {
     setStoppedNoteStatus(null);
-    const res = await fetch(`/api/judge/teams/${team.id}/stopped-note`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note: stoppedNote }),
-    });
-    setStoppedNoteStatus(res.ok ? "Saved." : "Couldn't save - check your connection and try again.");
+    try {
+      const res = await fetch(`/api/judge/teams/${team.id}/stopped-note`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: stoppedNote }),
+      });
+      if (res.ok) {
+        setStoppedNoteStatus("Saved.");
+      } else {
+        const body = await res.json().catch(() => null);
+        setStoppedNoteStatus(
+          body?.error ? `Couldn't save: ${body.error}` : "Couldn't save - check your connection and try again."
+        );
+      }
+    } catch {
+      setStoppedNoteStatus("Couldn't save - check your connection and try again.");
+    }
   }
 
   useEffect(() => {
