@@ -257,6 +257,119 @@ export default function AdminDashboard({
   const [creatingViewer, setCreatingViewer] = useState(false);
   const [viewerCreateStatus, setViewerCreateStatus] = useState<string | null>(null);
 
+  // --- Build the event: add a team, add a heat ---
+  const emptyNewTeam = {
+    team_name: "",
+    athlete_1: "",
+    athlete_2: "",
+    division: "",
+    wave: "",
+  };
+  const [newTeam, setNewTeam] = useState(emptyNewTeam);
+  const [addingTeam, setAddingTeam] = useState(false);
+  const [addTeamStatus, setAddTeamStatus] = useState<string | null>(null);
+
+  const [newHeatTime, setNewHeatTime] = useState("");
+  const [newHeatDate, setNewHeatDate] = useState("");
+  const [addingHeat, setAddingHeat] = useState(false);
+  const [heatStatus, setHeatStatus] = useState<string | null>(null);
+
+  // Original heat number for each team, so we can tell when a Save is
+  // actually moving a team to another heat (which re-generates its ID and
+  // needs a reload to pick up).
+  const originalWaveById = new Map(teams.map((t) => [t.id, t.wave]));
+  const teamCountByWave = new Map<number, number>();
+  for (const t of rows) {
+    if (t.wave != null) {
+      teamCountByWave.set(t.wave, (teamCountByWave.get(t.wave) ?? 0) + 1);
+    }
+  }
+  const sortedWaves = [...waveList].sort(
+    (a, b) =>
+      new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime()
+  );
+
+  async function addTeam(e: React.FormEvent) {
+    e.preventDefault();
+    setAddTeamStatus(null);
+    if (!newTeam.team_name.trim() || !newTeam.wave) {
+      setAddTeamStatus("A team name and a heat are required.");
+      return;
+    }
+    setAddingTeam(true);
+    const res = await fetch("/api/admin/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...newTeam, wave: Number(newTeam.wave) }),
+    });
+    const data = await res.json();
+    setAddingTeam(false);
+    if (!res.ok) {
+      setAddTeamStatus(data.error ?? "Couldn't add the team.");
+      return;
+    }
+    setAddTeamStatus(`Added ${data.team.id}. Reloading...`);
+    setNewTeam(emptyNewTeam);
+    setTimeout(() => window.location.reload(), 900);
+  }
+
+  async function deleteTeam(team: Team) {
+    const confirmed = window.confirm(
+      `Delete ${team.id} (${team.team_name || "unnamed"})? This also removes any scans, penalties, judge assignments, and this team's own login. It can't be undone.`
+    );
+    if (!confirmed) return;
+    const res = await fetch(`/api/admin/teams/${team.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setRows((prev) => prev.filter((t) => t.id !== team.id));
+      setAssignmentList((prev) => prev.filter((a) => a.team_id !== team.id));
+    } else {
+      const data = await res.json().catch(() => null);
+      window.alert(data?.error ?? "Couldn't delete this team.");
+    }
+  }
+
+  async function addHeat(e: React.FormEvent) {
+    e.preventDefault();
+    setHeatStatus(null);
+    if (!/^\d{2}:\d{2}$/.test(newHeatTime)) {
+      setHeatStatus("Enter a start time first.");
+      return;
+    }
+    setAddingHeat(true);
+    const res = await fetch("/api/admin/heats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        time: newHeatTime,
+        date: newHeatDate || undefined,
+      }),
+    });
+    const data = await res.json();
+    setAddingHeat(false);
+    if (!res.ok) {
+      setHeatStatus(data.error ?? "Couldn't add the heat.");
+      return;
+    }
+    setWaveList((prev) => [...prev, data.wave]);
+    setNewHeatTime("");
+    setNewHeatDate("");
+  }
+
+  async function removeHeat(waveNumber: number) {
+    if (!window.confirm(`Remove Heat ${waveNumber}?`)) return;
+    const res = await fetch("/api/admin/heats", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waveNumber }),
+    });
+    if (res.ok) {
+      setWaveList((prev) => prev.filter((w) => w.wave_number !== waveNumber));
+    } else {
+      const data = await res.json().catch(() => null);
+      window.alert(data?.error ?? "Couldn't remove this heat.");
+    }
+  }
+
   // --- Reset for new event ---
   const [resetScope, setResetScope] = useState<"race-data" | "full" | null>(null);
   const [resetConfirmText, setResetConfirmText] = useState("");
@@ -330,7 +443,9 @@ export default function AdminDashboard({
 
   async function saveRow(team: Team) {
     setSavingId(team.id);
-    await fetch(`/api/admin/teams/${team.id}`, {
+    const movingHeat =
+      String(team.wave ?? "") !== String(originalWaveById.get(team.id) ?? "");
+    const res = await fetch(`/api/admin/teams/${team.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -343,6 +458,14 @@ export default function AdminDashboard({
       }),
     });
     setSavingId(null);
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      window.alert(data?.error ?? "Couldn't save this team.");
+      return;
+    }
+    // A heat change re-generates the team's ID on the server - reload so
+    // the table, QR sheet and assignment lists all pick up the new ID.
+    if (movingHeat) window.location.reload();
   }
 
   async function addAssignment() {
@@ -540,7 +663,7 @@ export default function AdminDashboard({
           the line.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {waveList.map((w) => {
+          {sortedWaves.map((w) => {
             const started = !!w.actual_start;
             const ended = !!w.actual_end;
             const scheduled = new Date(w.scheduled_start).toLocaleTimeString([], {
@@ -602,6 +725,21 @@ export default function AdminDashboard({
                   >
                     {busy ? "Starting..." : `Start Heat ${w.wave_number}`}
                   </button>
+                )}
+
+                {!started && (teamCountByWave.get(w.wave_number) ?? 0) === 0 && (
+                  <button
+                    onClick={() => removeHeat(w.wave_number)}
+                    className="mt-2 block w-full text-xs text-fofGunmetal underline"
+                  >
+                    Remove heat
+                  </button>
+                )}
+                {!started && (teamCountByWave.get(w.wave_number) ?? 0) > 0 && (
+                  <p className="mt-2 text-[10px] text-fofGunmetal">
+                    {teamCountByWave.get(w.wave_number)} team
+                    {teamCountByWave.get(w.wave_number) === 1 ? "" : "s"}
+                  </p>
                 )}
 
                 {started && !ended && (
@@ -670,13 +808,118 @@ export default function AdminDashboard({
               </div>
             );
           })}
+
+          <form
+            onSubmit={addHeat}
+            className="flex flex-col items-center justify-center gap-2 rounded border border-dashed border-fofCharcoal p-4 text-center"
+          >
+            <p className="font-display text-sm text-fofGunmetal">Add a heat</p>
+            {waveList.length === 0 && (
+              <input
+                type="date"
+                value={newHeatDate}
+                onChange={(e) => setNewHeatDate(e.target.value)}
+                className="rounded border border-fofGunmetal bg-transparent px-2 py-1 text-xs"
+                aria-label="Event date for the first heat"
+              />
+            )}
+            <input
+              type="time"
+              value={newHeatTime}
+              onChange={(e) => setNewHeatTime(e.target.value)}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1 text-sm"
+              aria-label="Scheduled start time for the new heat"
+            />
+            <button
+              type="submit"
+              disabled={addingHeat}
+              className="tap-target w-full rounded btn-stamped font-display text-sm disabled:opacity-50"
+            >
+              {addingHeat ? "Adding..." : "Add heat"}
+            </button>
+          </form>
         </div>
+        {heatStatus && <p className="mt-2 text-sm text-fofRed">{heatStatus}</p>}
       </section>
 
       <LiveMonitor />
 
       <section className="mb-10 overflow-x-auto">
         <h2 className="mb-3 border-t-2 border-fofRed pt-4 font-display text-lg tracking-wide">Teams</h2>
+
+        <form
+          onSubmit={addTeam}
+          className="mb-4 flex flex-wrap items-end gap-2 rounded border border-fofCharcoal p-3 text-sm"
+        >
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Team name</label>
+            <input
+              value={newTeam.team_name}
+              onChange={(e) => setNewTeam((p) => ({ ...p, team_name: e.target.value }))}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Athlete 1</label>
+            <input
+              value={newTeam.athlete_1}
+              onChange={(e) => setNewTeam((p) => ({ ...p, athlete_1: e.target.value }))}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Athlete 2</label>
+            <input
+              value={newTeam.athlete_2}
+              onChange={(e) => setNewTeam((p) => ({ ...p, athlete_2: e.target.value }))}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Division</label>
+            <select
+              value={newTeam.division}
+              onChange={(e) => setNewTeam((p) => ({ ...p, division: e.target.value }))}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
+            >
+              <option value="" className="bg-fofBlack">
+                -
+              </option>
+              <option value="Men" className="bg-fofBlack">Men</option>
+              <option value="Women" className="bg-fofBlack">Women</option>
+              <option value="Mixed" className="bg-fofBlack">Mixed</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-fofGunmetal">Heat</label>
+            <select
+              value={newTeam.wave}
+              onChange={(e) => setNewTeam((p) => ({ ...p, wave: e.target.value }))}
+              className="rounded border border-fofGunmetal bg-transparent px-2 py-1"
+            >
+              <option value="" className="bg-fofBlack">
+                Choose...
+              </option>
+              {sortedWaves.map((w) => (
+                <option key={w.wave_number} value={w.wave_number} className="bg-fofBlack">
+                  Heat {w.wave_number}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={addingTeam}
+            className="tap-target rounded btn-stamped px-4 font-display disabled:opacity-50"
+          >
+            {addingTeam ? "Adding..." : "Add team"}
+          </button>
+          <span className="text-xs text-fofGunmetal">
+            ID is assigned automatically (FF + heat time + position).
+          </span>
+          {addTeamStatus && <span className="text-xs text-fofRed">{addTeamStatus}</span>}
+        </form>
+
         <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
@@ -733,11 +976,24 @@ export default function AdminDashboard({
                     </select>
                   </td>
                   <td className="p-2">
-                    <input
+                    <select
                       value={team.wave ?? ""}
                       onChange={(e) => updateField(team.id, "wave", e.target.value)}
-                      className="w-12 border-b border-transparent bg-transparent focus:border-fofRed"
-                    />
+                      className="border-b border-transparent bg-transparent focus:border-fofRed"
+                    >
+                      <option value="" className="bg-fofBlack">
+                        -
+                      </option>
+                      {sortedWaves.map((w) => (
+                        <option
+                          key={w.wave_number}
+                          value={w.wave_number}
+                          className="bg-fofBlack"
+                        >
+                          Heat {w.wave_number}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="p-2 text-fofGunmetal">
                     {next.isFinished ? "Finished" : next.label}
@@ -750,13 +1006,22 @@ export default function AdminDashboard({
                     )}
                   </td>
                   <td className="p-2">
-                    <button
-                      onClick={() => saveRow(team)}
-                      disabled={savingId === team.id}
-                      className="rounded border border-fofRed px-2 py-1 text-fofRed disabled:opacity-50"
-                    >
-                      {savingId === team.id ? "Saving..." : "Save"}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveRow(team)}
+                        disabled={savingId === team.id}
+                        className="rounded border border-fofRed px-2 py-1 text-fofRed disabled:opacity-50"
+                      >
+                        {savingId === team.id ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        onClick={() => deleteTeam(team)}
+                        className="rounded border border-fofGunmetal px-2 py-1 text-fofGunmetal hover:border-fofRed hover:text-fofRed"
+                        aria-label={`Delete ${team.id}`}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
