@@ -90,6 +90,37 @@ export function getNextAction(scans: Scan[]): NextAction {
   };
 }
 
+/**
+ * How long the team has been on whatever they're doing right now: time
+ * since they arrived, if they're at a station (event_type "leave" is
+ * next); or time since their last scan (or race start, if there isn't
+ * one yet) if they're out on the 400m run toward the next station.
+ * Returns null once finished - there's nothing "current" left to time.
+ */
+export function getCurrentLegElapsedMs(
+  scans: Scan[],
+  next: NextAction,
+  startTime: string,
+  now: number
+): number | null {
+  if (next.isFinished) return null;
+
+  if (next.eventType === "leave") {
+    const arrive = scans.find(
+      (s) => s.station_number === next.stationNumber && s.event_type === "arrive"
+    );
+    if (!arrive) return null;
+    return now - new Date(arrive.scanned_at).getTime();
+  }
+
+  const sorted = [...scans].sort(
+    (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
+  );
+  const last = sorted[sorted.length - 1];
+  const since = last ? new Date(last.scanned_at).getTime() : new Date(startTime).getTime();
+  return now - since;
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 0) ms = 0;
   const totalSeconds = Math.floor(ms / 1000);

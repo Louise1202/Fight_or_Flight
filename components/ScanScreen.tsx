@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getNextAction, buildSplits, buildLegs, formatDuration, Scan } from "@/lib/timing";
+import { getNextAction, buildSplits, buildLegs, formatDuration, getCurrentLegElapsedMs, STATIONS, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
 import { useSharedTheme } from "@/lib/useSharedTheme";
@@ -117,6 +117,27 @@ export default function ScanScreen({
   const next = getNextAction(scans);
   const splits = buildSplits(scans, startTime);
   const legs = buildLegs(splits);
+  const currentLegElapsedMs = getCurrentLegElapsedMs(scans, next, startTime, now);
+
+  const atLabel = next.isFinished
+    ? "Finished"
+    : next.eventType === "leave"
+    ? `${next.stationNumber} \u00b7 ${next.stationName}`
+    : next.stationNumber === 13
+    ? "Running to the finish"
+    : `Running to station ${next.stationNumber}`;
+
+  const afterStation =
+    !next.isFinished && next.eventType === "leave"
+      ? STATIONS.find((s) => s.number === next.stationNumber + 1)
+      : null;
+  const nextLabel = next.isFinished
+    ? null
+    : next.eventType === "leave"
+    ? afterStation
+      ? `${afterStation.number} \u00b7 ${afterStation.name}`
+      : "Finish"
+    : `${next.stationNumber} \u00b7 ${next.stationName}`;
 
   // Fires the sound/vibration/banner alert the moment THIS device sees the
   // heat end - not on page load if it had already ended earlier, only on
@@ -495,12 +516,31 @@ export default function ScanScreen({
             </div>
           )}
 
-          <section className="mt-4 rounded-lg border-2 border-fofRed p-4 text-center">
-            <p className="text-sm text-fofGunmetal">Next</p>
-            <p className="font-display text-xl text-fofRed">
-              {next.isFinished ? "FINISHED" : next.label}
+          <div className="mt-4 rounded-lg border border-fofCharcoal p-3 text-center">
+            <p className="text-xs text-fofGunmetal">
+              {next.eventType === "leave" ? "At station" : "Currently"}
             </p>
-          </section>
+            <p className="mt-1 font-display text-sm">
+              {next.isFinished ? "Finished" : atLabel}
+            </p>
+          </div>
+
+          {!next.isFinished && (
+            <div className="mt-2 flex gap-2">
+              <div className="flex-1 rounded-lg border-2 border-fofRed p-3 text-center">
+                <p className="text-xs text-fofGunmetal">
+                  {next.eventType === "leave" ? "Time at this station" : "Time on this run"}
+                </p>
+                <p className="font-display text-xl text-fofRed">
+                  {currentLegElapsedMs != null ? formatDuration(currentLegElapsedMs) : "-"}
+                </p>
+              </div>
+              <div className="flex-1 rounded-lg border border-fofCharcoal p-3 text-center">
+                <p className="text-xs text-fofGunmetal">Next</p>
+                <p className="mt-1 font-display text-sm text-fofGunmetal">{nextLabel}</p>
+              </div>
+            </div>
+          )}
 
           {!next.isFinished && (
             <button
@@ -567,19 +607,41 @@ export default function ScanScreen({
               PROGRESS
             </h2>
             <ul className="space-y-1 text-sm">
-              {legs.map((leg, i) => (
-                <li
-                  key={i}
-                  className="flex justify-between border-b border-fofCharcoal py-1"
-                >
-                  <span>
-                    {i + 1}. {leg.label}
-                  </span>
-                  <span className="text-fofGunmetal">
-                    {leg.ms != null ? formatDuration(leg.ms) : ""}
-                  </span>
-                </li>
-              ))}
+              {legs.map((leg, i) => {
+                const isLive =
+                  i === legs.length - 1 &&
+                  leg.ms == null &&
+                  leg.label !== "Finish" &&
+                  currentLegElapsedMs != null;
+                return (
+                  <li
+                    key={i}
+                    className={`flex justify-between py-1 ${
+                      isLive ? "border-b border-fofRed" : "border-b border-fofCharcoal"
+                    }`}
+                  >
+                    <span>
+                      {i + 1}. {leg.label}
+                    </span>
+                    <span
+                      className={
+                        isLive
+                          ? "flex items-center gap-1.5 font-medium text-fofRed"
+                          : "text-fofGunmetal"
+                      }
+                    >
+                      {isLive && (
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-fofRed" />
+                      )}
+                      {isLive
+                        ? formatDuration(currentLegElapsedMs!)
+                        : leg.ms != null
+                        ? formatDuration(leg.ms)
+                        : ""}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         </>
