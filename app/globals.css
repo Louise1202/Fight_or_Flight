@@ -4,22 +4,52 @@
 
 :root {
   color-scheme: dark;
+
+  /* fof* design tokens, dark mode (the original, unchanged values). */
+  --fof-red: #E8262D;
+  --fof-black: #0E0D0C;
+  --fof-paper: #F4F1EA;
+  --fof-gunmetal: #7A756C;
+  --fof-charcoal: #2A2724;
+  --fof-panel: #191713;
+  --fof-sunk: #0B0A09;
+  --fof-rule: #3A3630;
+  /* Speck colour for the .ground grain/twill lines, as "r, g, b" so it can
+     be dropped into rgba(var(--fof-ink-rgb), alpha) below. Light specks on
+     a dark surface in dark mode. */
+  --fof-ink-rgb: 244, 241, 234;
+}
+
+/* Scoped light-mode override. Only elements INSIDE something carrying
+   data-theme="light" (currently just the /admin page) pick these up -
+   every other page keeps the dark defaults above untouched. */
+[data-theme="light"] {
+  color-scheme: light;
+  --fof-black: #F4F1EA;
+  --fof-paper: #0E0D0C;
+  --fof-gunmetal: #6E685F;
+  --fof-charcoal: #D9D4C7;
+  --fof-panel: #EAE6DC;
+  --fof-sunk: #FFFFFF;
+  --fof-rule: #D0CBBE;
+  /* fof-red stays the same in both themes - it's the brand accent. */
+  --fof-ink-rgb: 14, 13, 12;
 }
 
 html,
 body {
-  background-color: #0e0d0c;
-  color: #f4f1ea;
+  background-color: var(--fof-black);
+  color: var(--fof-paper);
 }
 
 /* Worn-patch ground: grain + crossed twill weave + one cold red glow off
    the top edge. All static background layers - no repaint, no battery cost. */
 .ground {
-  background-color: #0e0d0c;
+  background-color: var(--fof-black);
   background-image:
     url("/texture/grain.svg"),
-    repeating-linear-gradient(135deg, rgba(244, 241, 234, 0.028) 0 1px, transparent 1px 4px),
-    repeating-linear-gradient(45deg, rgba(244, 241, 234, 0.018) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(135deg, rgba(var(--fof-ink-rgb), 0.028) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(45deg, rgba(var(--fof-ink-rgb), 0.018) 0 1px, transparent 1px 5px),
     radial-gradient(120% 90% at 50% -10%, rgba(232, 38, 45, 0.1), transparent 62%);
   background-blend-mode: overlay, normal, normal, normal;
   background-attachment: fixed;
@@ -27,7 +57,7 @@ body {
 
 /* Stitch line - the patch's thread, used sparingly as a divider. */
 .stitch {
-  border-top: 1px dashed #2a2724;
+  border-top: 1px dashed var(--fof-charcoal);
 }
 
 /* Every time, split, count and position uses this: columns stay aligned
@@ -40,7 +70,7 @@ body {
 /* Visible keyboard focus everywhere - judges are on phones, but
    this also matters for anyone using the admin dashboard on a laptop. */
 :focus-visible {
-  outline: 3px solid #e8262d;
+  outline: 3px solid var(--fof-red);
   outline-offset: 2px;
 }
 

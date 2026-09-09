@@ -34,6 +34,19 @@ export default function AdminDashboard({
   teamsWithViewer: string[];
   waves: Wave[];
 }) {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  // Load the admin's last choice on mount, then keep localStorage in sync
+  // with any change. Scoped to this page only - other routes are unaffected.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("fof-admin-theme");
+    if (saved === "light" || saved === "dark") setTheme(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("fof-admin-theme", theme);
+  }, [theme]);
+
   const [rows, setRows] = useState<Team[]>(teams);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentList, setAssignmentList] = useState<Assignment[]>(assignments);
@@ -412,9 +425,18 @@ export default function AdminDashboard({
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
+    <main
+      data-theme={theme}
+      className="ground min-h-screen bg-fofBlack text-fofPaper mx-auto max-w-6xl px-4 py-8"
+    >
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-2xl text-fofRed">RACE HQ - ADMIN</h1>
+        <button
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
+        >
+          {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
+        </button>
         <a
           href="/api/admin/export"
           className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
