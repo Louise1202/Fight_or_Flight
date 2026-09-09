@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getNextAction, Scan } from "@/lib/timing";
-import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
+import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
+import { playHeatEndAlert } from "@/lib/heatAlert";
 
 type Team = {
   id: string;
@@ -98,8 +99,30 @@ export default function TeamCard({
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
+  const ended = hasWaveEnded(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
   const next = getNextAction(scans);
+
+  const wasEndedRef = useRef(ended);
+  useEffect(() => {
+    if (ended && !wasEndedRef.current) {
+      playHeatEndAlert();
+    }
+    wasEndedRef.current = ended;
+  }, [ended]);
+
+  useEffect(() => {
+    if (!started || ended || team.wave == null) return;
+    const check = () => {
+      const elapsed = Date.now() - new Date(startTime).getTime();
+      if (elapsed >= 60 * 60 * 1000) {
+        fetch(`/api/waves/${team.wave}/auto-close`, { method: "POST" }).catch(() => {});
+      }
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, [started, ended, startTime, team.wave]);
 
   useEffect(() => {
     if (team.wave == null) return;
@@ -146,14 +169,25 @@ export default function TeamCard({
     const list = readQueue(team.id);
     if (list.length === 0) return;
     const remaining: PendingScan[] = [];
+    let permanentlyFailed = 0;
     for (const item of list) {
       const { error } = await supabase.from("scans").insert(toScanInsert(item));
-      if (error && error.code !== "23505" && !error.code) {
+      if (error) {
+        if (error.code === "23505") continue;
+        if (error.code === "P0001") {
+          permanentlyFailed++;
+          continue;
+        }
         remaining.push(item);
       }
     }
     writeQueue(team.id, remaining);
     refreshPendingCount();
+    if (permanentlyFailed > 0) {
+      setMessage(
+        `${permanentlyFailed} scan${permanentlyFailed > 1 ? "s" : ""} couldn't be saved - tell the organizer.`
+      );
+    }
     if (remaining.length < list.length) await refreshFromServer();
   }, [supabase, team.id, refreshPendingCount, refreshFromServer]);
 
@@ -212,7 +246,7 @@ export default function TeamCard({
         setSubmitting(false);
         return;
       }
-      if (error.code) {
+      if (error.code === "P0001") {
         setMessage(`Couldn't save: ${error.message}. Tell the organizer.`);
         setSubmitting(false);
         return;
@@ -275,6 +309,21 @@ export default function TeamCard({
         <p className="mt-2 text-sm text-fofGunmetal">
           Waiting for Heat {team.wave} to start
         </p>
+      ) : ended ? (
+        <>
+          <p className="mt-1 text-sm text-fofGunmetal">
+            Heat {team.wave} has ended
+            {!next.isFinished ? " - team stopped where they were" : ""}
+          </p>
+          {!next.isFinished && (
+            <Link
+              href={`/judge/${team.id}`}
+              className="mt-2 inline-block text-xs text-fofRed underline"
+            >
+              Add a note on where they stopped &rarr;
+            </Link>
+          )}
+        </>
       ) : (
         <>
           <p className="mt-1 text-sm text-fofRed">
@@ -282,9 +331,12 @@ export default function TeamCard({
           </p>
 
           {pendingCount > 0 && (
-            <p className="mt-1 text-xs text-fofPaper">
-              {pendingCount} waiting to sync
-            </p>
+            <div className="mt-1 flex items-center justify-between gap-2 text-xs text-fofPaper">
+              <span>{pendingCount} waiting to sync</span>
+              <button onClick={flushQueue} className="rounded border border-fofPaper px-2 py-0.5">
+                Retry now
+              </button>
+            </div>
           )}
 
           {!next.isFinished && (

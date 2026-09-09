@@ -114,10 +114,10 @@ export default function TeamResults({
   return (
     <main className="mx-auto max-w-md px-4 py-6">
       {finalMs != null && (
-        <div className="relative mx-auto mb-2 mt-4" style={{ width: 260 }}>
+        <div className="relative mx-auto mb-2 mt-10" style={{ width: 260 }}>
           <svg
             viewBox="0 0 260 100"
-            className="absolute -top-3 left-0 z-10 h-[100px] w-[260px] overflow-visible"
+            className="absolute -top-1 left-0 z-10 h-[100px] w-[260px] overflow-visible"
             xmlns="http://www.w3.org/2000/svg"
             xmlnsXlink="http://www.w3.org/1999/xlink"
           >

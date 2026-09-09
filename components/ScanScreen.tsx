@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getNextAction, buildSplits, buildLegs, formatDuration, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
+import { playHeatEndAlert } from "@/lib/heatAlert";
 
 type Team = {
   id: string;
@@ -103,6 +104,8 @@ export default function ScanScreen({
   const [penaltyNote, setPenaltyNote] = useState("");
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [stoppedNote, setStoppedNote] = useState("");
+  const [stoppedNoteStatus, setStoppedNoteStatus] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
   const ended = hasWaveEnded(wave);
@@ -110,6 +113,47 @@ export default function ScanScreen({
   const next = getNextAction(scans);
   const splits = buildSplits(scans, startTime);
   const legs = buildLegs(splits);
+
+  // Fires the sound/vibration/banner alert the moment THIS device sees the
+  // heat end - not on page load if it had already ended earlier, only on
+  // the live transition from not-ended to ended.
+  const wasEndedRef = useRef(ended);
+  useEffect(() => {
+    if (ended && !wasEndedRef.current) {
+      playHeatEndAlert();
+    }
+    wasEndedRef.current = ended;
+  }, [ended]);
+
+  // Once this team's heat has been running for 60 minutes, ping the
+  // auto-close endpoint. The endpoint itself re-checks the real elapsed
+  // time server-side before doing anything, so calling it slightly early
+  // (clock drift, a slow tick) is always a safe no-op.
+  useEffect(() => {
+    if (!started || ended || team.wave == null) return;
+    const check = () => {
+      const elapsed = Date.now() - new Date(startTime).getTime();
+      if (elapsed >= 60 * 60 * 1000) {
+        fetch(`/api/waves/${team.wave}/auto-close`, { method: "POST" }).catch(() => {
+          // Offline right at this moment - harmless, the next tick (or
+          // another judge's device) retries this automatically.
+        });
+      }
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, [started, ended, startTime, team.wave]);
+
+  async function saveStoppedNote() {
+    setStoppedNoteStatus(null);
+    const res = await fetch(`/api/judge/teams/${team.id}/stopped-note`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: stoppedNote }),
+    });
+    setStoppedNoteStatus(res.ok ? "Saved." : "Couldn't save - check your connection and try again.");
+  }
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -173,12 +217,18 @@ export default function ScanScreen({
       const { error } = await supabase.from("scans").insert(toScanInsert(item));
       if (error) {
         if (error.code === "23505") {
+          // Already saved under this client_scan_id - nothing to retry.
           continue;
         }
-        if (error.code) {
+        if (error.code === "P0001") {
+          // The scan-order validation trigger rejected it - retrying
+          // won't change that outcome, a human needs to look at it.
           permanentlyFailed++;
           continue;
         }
+        // Any other error - including ones that happen to carry a
+        // Postgres error code during a flaky connection - is treated as
+        // transient and kept in the queue to retry.
         remaining.push(item);
       }
     }
@@ -259,7 +309,7 @@ export default function ScanScreen({
         return;
       }
 
-      if (error.code) {
+      if (error.code === "P0001") {
         setMessage(
           `Couldn't save this scan: ${error.message}. Tell the race organizer - this needs fixing, not just a retry.`
         );
@@ -365,6 +415,35 @@ export default function ScanScreen({
             </p>
           </section>
 
+          {!next.isFinished && (
+            <section className="mt-4 rounded-lg border border-fofCharcoal p-4">
+              <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
+                WHERE DID THEY STOP?
+              </h2>
+              <p className="mb-2 text-xs text-fofGunmetal">
+                {next.eventType === "leave" && next.stationNumber <= 12
+                  ? `Last recorded at station ${next.stationNumber} - add a note for exactly where they were (e.g. "8 of 15 reps done").`
+                  : "Add a note for exactly where they were when the heat ended."}
+              </p>
+              <textarea
+                value={stoppedNote}
+                onChange={(e) => setStoppedNote(e.target.value)}
+                placeholder="e.g. 8 of 15 reps into station 6"
+                className="tap-target w-full rounded-md border border-fofGunmetal bg-transparent px-3 py-2 text-sm"
+                rows={2}
+              />
+              <button
+                onClick={saveStoppedNote}
+                className="tap-target mt-2 w-full rounded-md border border-fofGunmetal font-display text-sm"
+              >
+                Save note
+              </button>
+              {stoppedNoteStatus && (
+                <p className="mt-1 text-xs text-fofGunmetal">{stoppedNoteStatus}</p>
+              )}
+            </section>
+          )}
+
           <section className="mt-8">
             <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
               PROGRESS
@@ -396,9 +475,17 @@ export default function ScanScreen({
           </section>
 
           {pendingCount > 0 && (
-            <p className="mt-2 rounded-md bg-fofCharcoal px-3 py-2 text-sm text-fofPaper">
-              {pendingCount} scan{pendingCount > 1 ? "s" : ""} waiting to sync
-            </p>
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-fofCharcoal px-3 py-2 text-sm text-fofPaper">
+              <span>
+                {pendingCount} scan{pendingCount > 1 ? "s" : ""} waiting to sync
+              </span>
+              <button
+                onClick={flushQueue}
+                className="rounded border border-fofPaper px-2 py-1 text-xs"
+              >
+                Retry now
+              </button>
+            </div>
           )}
 
           <section className="mt-4 rounded-lg border-2 border-fofRed p-4 text-center">

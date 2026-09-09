@@ -55,7 +55,7 @@ export default function RootLayout({
       lang="en"
       className={`${staatliches.variable} ${barlow.variable} ${plexMono.variable} ${permanentMarker.variable}`}
     >
-      <body className="ground min-h-screen bg-fofBlack text-fofPaper font-body antialiased">
+      <body className="ground min-h-screen bg-fofBlack text-fofPaper font-body antialiased pt-[env(safe-area-inset-top)]">
         {children}
       </body>
     </html>
