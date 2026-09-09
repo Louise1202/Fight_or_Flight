@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatDuration, getNextAction, Scan } from "@/lib/timing";
 import { Wave } from "@/lib/waves";
+import { useSharedTheme } from "@/lib/useSharedTheme";
 import LiveMonitor from "./LiveMonitor";
 import PasswordInput from "./PasswordInput";
 
@@ -26,6 +27,7 @@ export default function AdminDashboard({
   scans,
   teamsWithViewer,
   waves,
+  initialTheme,
 }: {
   teams: Team[];
   judges: Judge[];
@@ -33,19 +35,28 @@ export default function AdminDashboard({
   scans: Scan[];
   teamsWithViewer: string[];
   waves: Wave[];
+  initialTheme: "dark" | "light";
 }) {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const theme = useSharedTheme(initialTheme);
+  const [togglingTheme, setTogglingTheme] = useState(false);
 
-  // Load the admin's last choice on mount, then keep localStorage in sync
-  // with any change. Scoped to this page only - other routes are unaffected.
-  useEffect(() => {
-    const saved = window.localStorage.getItem("fof-admin-theme");
-    if (saved === "light" || saved === "dark") setTheme(saved);
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("fof-admin-theme", theme);
-  }, [theme]);
+  async function toggleTheme() {
+    setTogglingTheme(true);
+    try {
+      await fetch("/api/admin/settings/theme", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme: theme === "dark" ? "light" : "dark" }),
+      });
+      // No local setTheme call here on purpose - the Realtime
+      // subscription inside useSharedTheme picks up this same write
+      // (echoed back over the same channel judges use) and updates the
+      // screen, so admin and judges are always looking at one shared
+      // value rather than two that could drift apart.
+    } finally {
+      setTogglingTheme(false);
+    }
+  }
 
   const [rows, setRows] = useState<Team[]>(teams);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -432,8 +443,9 @@ export default function AdminDashboard({
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-2xl text-fofRed">RACE HQ - ADMIN</h1>
         <button
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed"
+          onClick={toggleTheme}
+          disabled={togglingTheme}
+          className="rounded border border-fofGunmetal px-3 py-2 text-sm hover:border-fofRed hover:text-fofRed disabled:opacity-50"
         >
           {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
         </button>

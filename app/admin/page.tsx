@@ -10,7 +10,7 @@ export default async function AdminPage() {
 
   const admin = createAdminClient();
 
-  const [{ data: teams }, { data: judges }, { data: assignments }, { data: scans }, { data: viewers }, { data: waves }] =
+  const [{ data: teams }, { data: judges }, { data: assignments }, { data: scans }, { data: viewers }, { data: waves }, { data: settings }] =
     await Promise.all([
       admin.from("teams").select("*").order("id"),
       admin.from("judges").select("id, name").order("name"),
@@ -20,6 +20,7 @@ export default async function AdminPage() {
         .select("team_id, station_number, event_type, scanned_at"),
       admin.from("team_viewers").select("team_id"),
       admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end").order("wave_number"),
+      admin.from("app_settings").select("theme").eq("id", 1).maybeSingle(),
     ]);
 
   return (
@@ -30,6 +31,7 @@ export default async function AdminPage() {
       scans={scans ?? []}
       teamsWithViewer={(viewers ?? []).map((v) => v.team_id)}
       waves={waves ?? []}
+      initialTheme={settings?.theme === "light" ? "light" : "dark"}
     />
   );
 }

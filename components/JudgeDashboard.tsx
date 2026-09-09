@@ -4,6 +4,7 @@ import LogoutButton from "./LogoutButton";
 import TeamCard from "./TeamCard";
 import { Scan } from "@/lib/timing";
 import { Wave } from "@/lib/waves";
+import { useSharedTheme } from "@/lib/useSharedTheme";
 
 type Team = {
   id: string;
@@ -20,15 +21,22 @@ export default function JudgeDashboard({
   teams,
   scansByTeam,
   wavesByNumber,
+  initialTheme,
 }: {
   judgeName: string;
   judgeId: string;
   teams: Team[];
   scansByTeam: Record<string, (Scan & { id: number })[]>;
   wavesByNumber: Record<number, Wave>;
+  initialTheme: "dark" | "light";
 }) {
+  const theme = useSharedTheme(initialTheme);
+
   return (
-    <main className="mx-auto max-w-md px-4 py-8">
+    <main
+      data-theme={theme}
+      className="ground min-h-screen bg-fofBlack text-fofPaper mx-auto max-w-md px-4 py-8"
+    >
       <header className="mb-6 flex items-center justify-between">
         <div>
           <p className="text-sm text-fofGunmetal">Judging as</p>

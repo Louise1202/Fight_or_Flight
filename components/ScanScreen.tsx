@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getNextAction, buildSplits, buildLegs, formatDuration, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
+import { useSharedTheme } from "@/lib/useSharedTheme";
 
 type Team = {
   id: string;
@@ -88,12 +89,15 @@ export default function ScanScreen({
   judgeId,
   initialScans,
   initialWave,
+  initialTheme,
 }: {
   team: Team;
   judgeId: string;
   initialScans: ScanRow[];
   initialWave: Wave | null;
+  initialTheme: "dark" | "light";
 }) {
+  const theme = useSharedTheme(initialTheme);
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
   const [wave, setWave] = useState<Wave | null>(initialWave);
@@ -374,7 +378,10 @@ export default function ScanScreen({
   }
 
   return (
-    <main className="mx-auto max-w-md px-4 py-6">
+    <main
+      data-theme={theme}
+      className="ground min-h-screen bg-fofBlack text-fofPaper mx-auto max-w-md px-4 py-6"
+    >
       <Link href="/judge" className="text-sm text-fofGunmetal">
         &larr; All teams
       </Link>
