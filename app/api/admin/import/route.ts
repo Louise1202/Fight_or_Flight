@@ -3,13 +3,19 @@ import ExcelJS from "exceljs";
 import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
+
 export const runtime = "nodejs";
 
 function normalizeDivision(raw: string | null): string | null {
   if (!raw) return null;
   const v = raw.trim();
-  if (v === "Mens") return "Men";
-  if (v === "Womans" || v === "Womens") return "Women";
+  if (v === "Mens" || v.toLowerCase() === "boys") return "Men";
+  if (v === "Womans" || v === "Womens" || v.toLowerCase() === "ladies" || v.toLowerCase() === "girls") return "Women";
   if (v === "TBC" || v === "") return null;
   return v;
 }

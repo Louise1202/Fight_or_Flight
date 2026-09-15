@@ -5,6 +5,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { computeStandings, TeamRow } from "@/lib/leaderboard";
 import { formatDuration, Scan } from "@/lib/timing";
 
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
+
 // exceljs needs real Node APIs (Buffer, streams) - not edge-compatible.
 export const runtime = "nodejs";
 
@@ -15,7 +21,7 @@ export async function GET() {
 
   const admin = createAdminClient();
 
-  const [{ data: teams }, { data: scans }, { data: penalties }, { data: judges }, { data: assignments }, { data: waves }] =
+  const [{ data: teams }, { data: scans }, { data: penalties }, { data: judges }, { data: assignments }, { data: waves }, { data: stations }] =
     await Promise.all([
       admin.from("teams").select("*").order("id"),
       admin.from("scans").select("*").order("scanned_at"),
@@ -23,6 +29,7 @@ export async function GET() {
       admin.from("judges").select("id, name"),
       admin.from("judge_team_assignments").select("judge_id, team_id"),
       admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
+      admin.from("stations").select("number, name, is_run").order("number"),
     ]);
 
   const judgeNameById = new Map((judges ?? []).map((j) => [j.id, j.name]));
@@ -52,7 +59,8 @@ export async function GET() {
     (teams ?? []) as TeamRow[],
     scansByTeam,
     penaltySecondsByTeam,
-    wavesByNumber
+    wavesByNumber,
+    (stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))
   );
 
   const workbook = new ExcelJS.Workbook();
@@ -113,10 +121,11 @@ export async function GET() {
     { header: "Timestamp", key: "scanned_at", width: 26 },
     { header: "Judge", key: "judge_name", width: 20 },
   ];
+  const finishStationNumber = (stations ?? []).reduce((max, s) => Math.max(max, s.number), 0) + 1;
   for (const s of scans ?? []) {
     scansSheet.addRow({
       team_id: s.team_id,
-      station_number: s.station_number === 13 ? "FINISH" : s.station_number,
+      station_number: s.station_number === finishStationNumber ? "FINISH" : s.station_number,
       event_type: s.event_type,
       scanned_at: s.scanned_at,
       judge_name: judgeNameById.get(s.judge_id) ?? s.judge_id,

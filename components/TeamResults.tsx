@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { buildSplits, buildLegs, formatDuration, getNextAction, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
+import { StationDef } from "@/lib/stations";
 import { CONGRATS_MESSAGES } from "@/lib/congratsMessages";
 import LogoutButton from "./LogoutButton";
 
@@ -23,11 +24,13 @@ export default function TeamResults({
   initialScans,
   penalties,
   initialWave,
+  stations,
 }: {
   team: Team;
   initialScans: ScanRow[];
   penalties: { station_number: number; penalty_seconds: number; notes: string | null }[];
   initialWave: Wave | null;
+  stations: StationDef[];
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
@@ -99,12 +102,12 @@ export default function TeamResults({
 
   const started = hasWaveStarted(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
-  const splits = buildSplits(scans, startTime);
-  const legs = buildLegs(splits);
-  const next = getNextAction(scans);
+  const splits = buildSplits(scans, startTime, stations);
+  const legs = buildLegs(scans, startTime, stations);
+  const next = getNextAction(scans, stations);
   const totalPenaltySeconds = penalties.reduce((sum, p) => sum + p.penalty_seconds, 0);
 
-  const finishScan = scans.find((s) => s.station_number === 13);
+  const finishScan = scans.find((s) => s.station_number === stations.length + 1);
   const rawMs = finishScan
     ? new Date(finishScan.scanned_at).getTime() - new Date(startTime).getTime()
     : null;
@@ -176,9 +179,9 @@ export default function TeamResults({
                 {formatDuration(liveElapsedMs ?? 0)}
               </p>
               <p className="mt-1 text-sm text-fofGunmetal">
-                {next.stationNumber <= 12
-                  ? `Station ${next.stationNumber}: ${next.stationName}`
-                  : "On the way to the finish"}
+                {next.runName
+                  ? `Running - ${next.runName}`
+                  : `Station ${next.displayNumber}: ${next.stationName}`}
               </p>
             </>
           )}

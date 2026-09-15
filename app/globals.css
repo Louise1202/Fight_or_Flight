@@ -86,6 +86,17 @@ button {
   min-height: 56px;
 }
 
+/* iOS Safari zooms the whole page in the instant a judge taps an input
+   under 16px - disruptive mid-race, and easy to trigger accidentally
+   since several inputs elsewhere use a smaller Tailwind text utility.
+   !important because a utility class on the same element would
+   otherwise win this specificity fight. */
+input,
+select,
+textarea {
+  font-size: max(16px, 1em) !important;
+}
+
 /* Stamped-metal primary button - the confirm/submit action across the
    app. Heavier bevel than a normal raised button, closer to the patch
    badge's hardware feel. Presses down visibly on tap for instant

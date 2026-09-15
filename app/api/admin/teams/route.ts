@@ -3,6 +3,12 @@ import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { heatIdPrefix, nextTeamId } from "@/lib/teamId";
 
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
+
 // Create a team without needing an Excel import. The id is generated from
 // the heat's scheduled time following the FF+HHMM+position scheme - the
 // admin never types it. New teams are appended: they take the next free

@@ -15,6 +15,7 @@ type LiveRow = {
   };
   status: "finished" | "in_progress" | "stopped" | "not_started";
   currentStationNumber: number;
+  currentStationIndex: number;
   currentStationLabel: string;
   currentEventType: "arrive" | "leave" | null;
   rawMs: number | null;
@@ -45,13 +46,13 @@ function StatusDot({ state }: { state: "fresh" | "warn" | "stale" }) {
 }
 
 function StationText({ row }: { row: LiveRow }) {
-  if (row.currentStationNumber > 12) return <>Running to finish</>;
+  if (row.currentStationLabel === "FINISH") return <>Running to finish</>;
   return (
     <>
       <span className={row.currentEventType === "arrive" ? "text-yellow-500" : "text-green-500"}>
         {row.currentEventType === "arrive" ? "Running to" : "At"}
       </span>{" "}
-      Station {row.currentStationNumber}: {row.currentStationLabel}
+      Station {row.currentStationIndex}: {row.currentStationLabel}
     </>
   );
 }
@@ -65,6 +66,7 @@ export default function LiveMonitor() {
   const [counts, setCounts] = useState<Counts | null>(null);
   const [now, setNow] = useState(Date.now());
   const [loaded, setLoaded] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,13 +74,19 @@ export default function LiveMonitor() {
       try {
         const res = await fetch("/api/admin/live", { cache: "no-store" });
         const data = await res.json();
-        if (!cancelled) {
-          setRows(data.standings);
-          setCounts(data.counts);
+        if (cancelled) return;
+        if (!res.ok) {
+          setFetchError(data.error ?? "Couldn't load live status.");
           setLoaded(true);
+          return;
         }
+        setFetchError(null);
+        setRows(data.standings ?? []);
+        setCounts(data.counts);
+        setLoaded(true);
       } catch {
-        // transient hiccup - next poll will retry
+        // A real network hiccup (offline, DNS, etc) - the next poll
+        // retries automatically, no need to alarm anyone over one miss.
       }
     }
     poll();
@@ -111,6 +119,10 @@ export default function LiveMonitor() {
 
       {!loaded ? (
         <p className="text-sm text-fofGunmetal">Loading live status...</p>
+      ) : fetchError ? (
+        <p className="text-sm text-fofRed">
+          Couldn't load live status: {fetchError}
+        </p>
       ) : (
         <div className="space-y-6">
           {inProgress.length > 0 && (

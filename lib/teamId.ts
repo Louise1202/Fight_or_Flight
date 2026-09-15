@@ -50,3 +50,20 @@ export function nextTeamId(
   }
   return candidate;
 }
+
+/**
+ * When a team moves to a different heat, its name needs to track its new
+ * position there too, not just its id - "Team 01" moving into a heat
+ * that already has 8 teams becomes "Team 09". This only touches a name
+ * that already has a number in it, keeping whatever text surrounds that
+ * number exactly as it was (padded to the same width the original had,
+ * so "Team 01" -> "Team 09", not "Team 9"). A custom name with no
+ * number in it at all (someone typed "The Fast Ones") is left completely
+ * untouched - there's no position label in it to update.
+ */
+export function renameForPosition(currentName: string, newPosition: number): string {
+  const match = currentName.match(/^(.*?)(\d+)(\D*)$/);
+  if (!match) return currentName;
+  const [, prefix, digits, suffix] = match;
+  return `${prefix}${String(newPosition).padStart(digits.length, "0")}${suffix}`;
+}

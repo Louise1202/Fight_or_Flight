@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Staatliches, Barlow_Semi_Condensed, IBM_Plex_Mono, Permanent_Marker } from "next/font/google";
 import "./globals.css";
 
@@ -43,6 +43,16 @@ export const metadata: Metadata = {
     icon: "/logo.png",
     apple: "/logo.png",
   },
+};
+
+// viewportFit: "cover" is what makes env(safe-area-inset-top) below
+// actually return the iPhone notch's real height - without it, iOS
+// doesn't render edge-to-edge and the inset just evaluates to 0.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

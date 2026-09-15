@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
+
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
 
 // Starts a heat (sets actual_start = now).
 export async function POST(req: NextRequest) {
@@ -101,5 +108,18 @@ export async function PUT(req: NextRequest) {
     .eq("wave_number", waveNumber);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, scheduled_start: newScheduledStart });
+
+  // A team's id encodes its heat's time (FF + HHMM + position). Rather
+  // than only re-id teams in THIS heat, run the same whole-roster fix
+  // used on every admin page load - it's just as cheap, and it also
+  // catches any other heat that was already stale from an earlier
+  // change, not only the one being edited right now.
+  const { updated, orphaned } = await autoFixTeamIds();
+
+  return NextResponse.json({
+    ok: true,
+    scheduled_start: newScheduledStart,
+    idsUpdated: updated,
+    orphaned,
+  });
 }

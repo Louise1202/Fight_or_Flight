@@ -29,7 +29,7 @@ export default async function TeamPage({
     .maybeSingle();
   if (!team) notFound();
 
-  const [{ data: scans }, { data: penalties }, { data: wave }] = await Promise.all([
+  const [{ data: scans }, { data: penalties }, { data: wave }, { data: stations }] = await Promise.all([
     supabase
       .from("scans")
       .select("id, station_number, event_type, scanned_at")
@@ -46,6 +46,7 @@ export default async function TeamPage({
           .eq("wave_number", team.wave)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    supabase.from("stations").select("number, name, is_run").order("number"),
   ]);
 
   return (
@@ -54,6 +55,7 @@ export default async function TeamPage({
       initialScans={scans ?? []}
       penalties={penalties ?? []}
       initialWave={wave ?? null}
+      stations={(stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))}
     />
   );
 }

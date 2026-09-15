@@ -36,7 +36,10 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
     <main className="mx-auto max-w-5xl px-4 py-8 print:px-0 print:py-0">
       <div className="mb-6 flex items-center justify-between print:hidden">
         <div>
-          <Link href="/admin" className="text-sm text-fofGunmetal">
+          <Link
+            href="/admin"
+            className="tap-target mb-3 inline-flex items-center gap-1 rounded-md border border-fofGunmetal px-3 py-1.5 text-sm text-fofPaper hover:border-fofRed hover:text-fofRed"
+          >
             &larr; Back to admin
           </Link>
           <h1 className="font-display text-2xl">Team QR codes</h1>
