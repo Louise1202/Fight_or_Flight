@@ -1,0 +1,12 @@
+-- Nothing before this stopped a team from ending up with more than one
+-- viewer login - that's exactly what happened to at least one team,
+-- and it broke editing (a lookup expecting one row got two). This makes
+-- it structurally impossible going forward: one team, at most one login.
+--
+-- Run this AFTER using the "Edit" button's duplicate-cleanup list on
+-- /admin to remove any team's extra login(s) - if any team still has
+-- two or more when this runs, the ALTER TABLE below will fail with a
+-- duplicate-key error and change nothing; just resolve those teams
+-- first (the admin UI already shows exactly which teams they are) and
+-- re-run this once they're all down to one each.
+alter table team_viewers add constraint team_viewers_team_id_unique unique (team_id);

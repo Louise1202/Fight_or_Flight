@@ -1,5 +1,6 @@
 import { buildSplits, getNextAction, Scan } from "./timing";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "./waves";
+import { StationDef, realStationIndex } from "./stations";
 
 export type TeamRow = {
   id: string;
@@ -16,6 +17,10 @@ export type Standing = {
   team: TeamRow;
   status: "finished" | "in_progress" | "stopped" | "not_started";
   currentStationNumber: number;
+  /** The number to actually SHOW - counts only real stations, never a
+   * run. currentStationNumber is the raw one, still used for sorting
+   * "who's further along" (it increases in the same order either way). */
+  currentStationIndex: number;
   currentStationLabel: string;
   /** "arrive" means they're still running toward this station; "leave"
    * means they've arrived and are actually doing the exercise there.
@@ -49,7 +54,8 @@ export function computeStandings(
   teams: TeamRow[],
   scansByTeam: Record<string, Scan[]>,
   penaltySecondsByTeam: Record<string, number>,
-  wavesByNumber: Record<number, Wave> = {}
+  wavesByNumber: Record<number, Wave> = {},
+  stations: StationDef[]
 ): Standing[] {
   const standings: Standing[] = teams.map((team) => {
     const scans = scansByTeam[team.id] ?? [];
@@ -68,6 +74,7 @@ export function computeStandings(
         team,
         status: "not_started" as const,
         currentStationNumber: 0,
+        currentStationIndex: 0,
         currentStationLabel: "Not started",
         currentEventType: null,
         rawMs: null,
@@ -80,7 +87,7 @@ export function computeStandings(
       };
     }
 
-    const next = getNextAction(scans);
+    const next = getNextAction(scans, stations);
     const lastScan =
       scans.length > 0
         ? [...scans].sort(
@@ -89,15 +96,16 @@ export function computeStandings(
         : null;
 
     if (next.isFinished && lastScan) {
-      const splits = buildSplits(scans, startTime);
-      const finish = splits.find((s) => s.station === 13);
+      const splits = buildSplits(scans, startTime, stations);
+      const finish = splits.find((s) => s.isFinish);
       const rawMs = finish?.arrivedAt
         ? new Date(finish.arrivedAt).getTime() - new Date(startTime).getTime()
         : null;
       return {
         team,
         status: "finished",
-        currentStationNumber: 13,
+        currentStationNumber: next.stationNumber,
+        currentStationIndex: realStationIndex(stations, next.stationNumber),
         currentStationLabel: "Finished",
         currentEventType: null,
         rawMs,
@@ -118,6 +126,7 @@ export function computeStandings(
         team,
         status: "stopped",
         currentStationNumber: next.stationNumber,
+        currentStationIndex: realStationIndex(stations, next.stationNumber),
         currentStationLabel: next.stationName,
         currentEventType: next.eventType,
         rawMs: null,
@@ -134,6 +143,7 @@ export function computeStandings(
       team,
       status: "in_progress",
       currentStationNumber: next.stationNumber,
+      currentStationIndex: realStationIndex(stations, next.stationNumber),
       currentStationLabel: next.stationName,
       currentEventType: next.eventType,
       rawMs: null,

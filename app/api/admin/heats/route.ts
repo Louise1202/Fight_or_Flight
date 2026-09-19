@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
+
 // Add / remove heats (waves) directly in /admin, so an event can be built
 // without an Excel import.
 //

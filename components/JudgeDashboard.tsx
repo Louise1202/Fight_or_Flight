@@ -4,6 +4,7 @@ import LogoutButton from "./LogoutButton";
 import TeamCard from "./TeamCard";
 import { Scan } from "@/lib/timing";
 import { Wave } from "@/lib/waves";
+import { StationDef } from "@/lib/stations";
 import { useSharedTheme } from "@/lib/useSharedTheme";
 
 type Team = {
@@ -22,6 +23,7 @@ export default function JudgeDashboard({
   scansByTeam,
   wavesByNumber,
   initialTheme,
+  stations,
 }: {
   judgeName: string;
   judgeId: string;
@@ -29,6 +31,7 @@ export default function JudgeDashboard({
   scansByTeam: Record<string, (Scan & { id: number })[]>;
   wavesByNumber: Record<number, Wave>;
   initialTheme: "dark" | "light";
+  stations: StationDef[];
 }) {
   const theme = useSharedTheme(initialTheme);
 
@@ -57,6 +60,7 @@ export default function JudgeDashboard({
             judgeId={judgeId}
             initialScans={scansByTeam[team.id] ?? []}
             initialWave={team.wave != null ? wavesByNumber[team.wave] ?? null : null}
+            stations={stations}
           />
         ))}
       </div>

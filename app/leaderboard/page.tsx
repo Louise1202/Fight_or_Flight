@@ -9,11 +9,12 @@ export const dynamic = "force-dynamic";
 export default async function LeaderboardPage() {
   const admin = createAdminClient();
 
-  const [{ data: teams }, { data: scans }, { data: penalties }, { data: waves }] = await Promise.all([
+  const [{ data: teams }, { data: scans }, { data: penalties }, { data: waves }, { data: stations }] = await Promise.all([
     admin.from("teams").select("id, team_name, division, wave, start_time"),
     admin.from("scans").select("team_id, station_number, event_type, scanned_at"),
     admin.from("penalties").select("team_id, penalty_seconds"),
     admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
+    admin.from("stations").select("number, name, is_run").order("number"),
   ]);
 
   const scansByTeam: Record<string, Scan[]> = {};
@@ -35,7 +36,8 @@ export default async function LeaderboardPage() {
     (teams ?? []) as TeamRow[],
     scansByTeam,
     penaltySecondsByTeam,
-    wavesByNumber
+    wavesByNumber,
+    (stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))
   );
 
   return <LeaderboardBoard initialStandings={initialStandings} />;

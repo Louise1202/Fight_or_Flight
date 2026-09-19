@@ -15,6 +15,7 @@ type LiveRow = {
   };
   status: "finished" | "in_progress" | "stopped" | "not_started";
   currentStationNumber: number;
+  currentStationIndex: number;
   currentStationLabel: string;
   currentEventType: "arrive" | "leave" | null;
   rawMs: number | null;
@@ -28,6 +29,16 @@ type LiveRow = {
 };
 
 type Counts = { finished: number; inProgress: number; stopped: number; notStarted: number; total: number };
+
+type WaveInfo = { wave_number: number; scheduled_start: string; actual_start: string | null; actual_end: string | null };
+
+function clockTime(iso: string): string {
+  const d = new Date(iso);
+  const hour12 = ((d.getUTCHours() + 11) % 12) + 1;
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ampm = d.getUTCHours() < 12 ? "AM" : "PM";
+  return `${hour12}:${mm} ${ampm}`;
+}
 
 function staleness(lastUpdate: string | null, now: number): "fresh" | "warn" | "stale" {
   if (!lastUpdate) return "fresh";
@@ -45,13 +56,13 @@ function StatusDot({ state }: { state: "fresh" | "warn" | "stale" }) {
 }
 
 function StationText({ row }: { row: LiveRow }) {
-  if (row.currentStationNumber > 12) return <>Running to finish</>;
+  if (row.currentStationLabel === "FINISH") return <>Running to finish</>;
   return (
     <>
       <span className={row.currentEventType === "arrive" ? "text-yellow-500" : "text-green-500"}>
         {row.currentEventType === "arrive" ? "Running to" : "At"}
       </span>{" "}
-      Station {row.currentStationNumber}: {row.currentStationLabel}
+      Station {row.currentStationIndex}: {row.currentStationLabel}
     </>
   );
 }
@@ -63,8 +74,10 @@ function athleteLine(team: LiveRow["team"]): string {
 export default function LiveMonitor() {
   const [rows, setRows] = useState<LiveRow[]>([]);
   const [counts, setCounts] = useState<Counts | null>(null);
+  const [waves, setWaves] = useState<WaveInfo[]>([]);
   const [now, setNow] = useState(Date.now());
   const [loaded, setLoaded] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,13 +85,20 @@ export default function LiveMonitor() {
       try {
         const res = await fetch("/api/admin/live", { cache: "no-store" });
         const data = await res.json();
-        if (!cancelled) {
-          setRows(data.standings);
-          setCounts(data.counts);
+        if (cancelled) return;
+        if (!res.ok) {
+          setFetchError(data.error ?? "Couldn't load live status.");
           setLoaded(true);
+          return;
         }
+        setFetchError(null);
+        setRows(data.standings ?? []);
+        setCounts(data.counts);
+        setWaves(data.waves ?? []);
+        setLoaded(true);
       } catch {
-        // transient hiccup - next poll will retry
+        // A real network hiccup (offline, DNS, etc) - the next poll
+        // retries automatically, no need to alarm anyone over one miss.
       }
     }
     poll();
@@ -98,6 +118,22 @@ export default function LiveMonitor() {
   const stopped = rows.filter((r) => r.status === "stopped");
   const finished = rows.filter((r) => r.status === "finished");
 
+  const stoppedByWave = new Map<number, LiveRow[]>();
+  for (const r of stopped) {
+    if (r.team.wave == null) continue;
+    const list = stoppedByWave.get(r.team.wave) ?? [];
+    list.push(r);
+    stoppedByWave.set(r.team.wave, list);
+  }
+  const stoppedGroups = [...stoppedByWave.entries()]
+    .map(([waveNumber, teams]) => ({
+      waveNumber,
+      teams,
+      wave: waves.find((w) => w.wave_number === waveNumber) ?? null,
+      finishedCount: finished.filter((r) => r.team.wave === waveNumber).length,
+    }))
+    .sort((a, b) => a.waveNumber - b.waveNumber);
+
   return (
     <section className="mb-10">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -111,6 +147,10 @@ export default function LiveMonitor() {
 
       {!loaded ? (
         <p className="text-sm text-fofGunmetal">Loading live status...</p>
+      ) : fetchError ? (
+        <p className="text-sm text-fofRed">
+          Couldn't load live status: {fetchError}
+        </p>
       ) : (
         <div className="space-y-6">
           {inProgress.length > 0 && (
@@ -191,82 +231,102 @@ export default function LiveMonitor() {
             </div>
           )}
 
-          {stopped.length > 0 && (
+          {stoppedGroups.length > 0 && (
             <div>
               <p className="mb-3 border-t-2 border-fofGunmetal pt-4 font-display text-lg uppercase tracking-wide text-fofPaper">
                 Stopped (heat ended)
               </p>
 
-              {/* Phone: stacked cards */}
-              <div className="space-y-2 md:hidden">
-                {stopped.map((r) => {
-                  const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
-                  const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
-                  const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
+              <div className="space-y-5">
+                {stoppedGroups.map((group) => {
+                  const ranMs =
+                    group.wave?.actual_start && group.wave?.actual_end
+                      ? new Date(group.wave.actual_end).getTime() - new Date(group.wave.actual_start).getTime()
+                      : null;
                   return (
-                    <div key={r.team.id} className="rounded border border-fofGunmetal p-3 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-display">{r.team.team_name}</span>
-                        <span className="text-xs text-fofGunmetal">
-                          {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
-                      <p className="mt-1 text-fofGunmetal">
-                        <StationText row={r} />
+                    <div key={group.waveNumber}>
+                      <p className="mb-2 text-sm text-fofRed">
+                        Heat {group.waveNumber}
+                        {group.wave?.actual_end && <> &middot; ended {clockTime(group.wave.actual_end)}</>}
+                        {ranMs != null && <> &middot; ran {formatDuration(ranMs)}</>}
+                        {" \u00b7 "}
+                        {group.teams.length} stopped, {group.finishedCount} finished
                       </p>
-                      <div className="mt-2 flex justify-between text-xs text-fofGunmetal">
-                        <span>Here: {formatDuration(timeOnThisLeg)}</span>
-                        <span>Total: {formatDuration(totalElapsed)}</span>
+
+                      {/* Phone: stacked cards */}
+                      <div className="space-y-2 md:hidden">
+                        {group.teams.map((r) => {
+                          const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
+                          const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
+                          const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
+                          return (
+                            <div key={r.team.id} className="rounded border border-fofCharcoal p-3 text-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-display">{r.team.team_name}</span>
+                                <span className="text-xs text-fofGunmetal">
+                                  {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
+                                </span>
+                              </div>
+                              <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                              <p className="mt-1 text-fofGunmetal">
+                                <StationText row={r} />
+                              </p>
+                              <div className="mt-2 flex justify-between text-xs text-fofGunmetal">
+                                <span>Here: {formatDuration(timeOnThisLeg)}</span>
+                                <span>Total: {formatDuration(totalElapsed)}</span>
+                              </div>
+                              {r.stoppedNote && (
+                                <p className="mt-2 rounded bg-fofCharcoal px-2 py-1 text-xs text-fofPaper">
+                                  "{r.stoppedNote}"
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                      {r.stoppedNote && (
-                        <p className="mt-2 rounded bg-fofCharcoal px-2 py-1 text-xs text-fofPaper">
-                          "{r.stoppedNote}"
-                        </p>
-                      )}
+
+                      {/* Desktop/tablet: full table */}
+                      <div className="hidden overflow-x-auto md:block">
+                        <table className="w-full min-w-[720px] border-collapse text-sm">
+                          <thead>
+                            <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
+                              <th className="p-2">Team #</th>
+                              <th className="p-2">Judge</th>
+                              <th className="p-2">Stopped At</th>
+                              <th className="p-2">Time Here</th>
+                              <th className="p-2">Total Time</th>
+                              <th className="p-2">Note</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.teams.map((r) => {
+                              const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
+                              const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
+                              const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
+                              return (
+                                <tr key={r.team.id} className="border-b border-fofCharcoal">
+                                  <td className="p-2">
+                                    <p className="font-display">{r.team.team_name}</p>
+                                    <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
+                                  </td>
+                                  <td className="p-2 text-fofGunmetal">
+                                    {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
+                                  </td>
+                                  <td className="p-2 text-fofGunmetal">
+                                    <StationText row={r} />
+                                  </td>
+                                  <td className="p-2 text-fofGunmetal">{formatDuration(timeOnThisLeg)}</td>
+                                  <td className="p-2 text-fofGunmetal">{formatDuration(totalElapsed)}</td>
+                                  <td className="p-2 text-fofGunmetal">{r.stoppedNote ?? "-"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   );
                 })}
-              </div>
-
-              {/* Desktop/tablet: full table */}
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[720px] border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
-                      <th className="p-2">Team #</th>
-                      <th className="p-2">Judge</th>
-                      <th className="p-2">Stopped At</th>
-                      <th className="p-2">Time Here</th>
-                      <th className="p-2">Total Time</th>
-                      <th className="p-2">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stopped.map((r) => {
-                      const frozenAt = r.stoppedAt ? new Date(r.stoppedAt).getTime() : now;
-                      const totalElapsed = r.startTime ? frozenAt - new Date(r.startTime).getTime() : 0;
-                      const timeOnThisLeg = r.lastUpdate ? frozenAt - new Date(r.lastUpdate).getTime() : 0;
-                      return (
-                        <tr key={r.team.id} className="border-b border-fofCharcoal">
-                          <td className="p-2">
-                            <p className="font-display">{r.team.team_name}</p>
-                            <p className="text-xs text-fofGunmetal">{athleteLine(r.team)}</p>
-                          </td>
-                          <td className="p-2 text-fofGunmetal">
-                            {r.judgeNames.length > 0 ? r.judgeNames.join(", ") : "no judge"}
-                          </td>
-                          <td className="p-2 text-fofGunmetal">
-                            <StationText row={r} />
-                          </td>
-                          <td className="p-2 text-fofGunmetal">{formatDuration(timeOnThisLeg)}</td>
-                          <td className="p-2 text-fofGunmetal">{formatDuration(totalElapsed)}</td>
-                          <td className="p-2 text-fofGunmetal">{r.stoppedNote ?? "-"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
               </div>
             </div>
           )}

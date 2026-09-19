@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getNextAction, buildSplits, buildLegs, formatDuration, getCurrentLegElapsedMs, STATIONS, Scan } from "@/lib/timing";
+import { getNextAction, buildSplits, buildLegs, formatDuration, getCurrentLegElapsedMs, Scan } from "@/lib/timing";
+import { StationDef, withFinish, realStationIndex } from "@/lib/stations";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
 import { useSharedTheme } from "@/lib/useSharedTheme";
@@ -91,12 +92,14 @@ export default function ScanScreen({
   initialScans,
   initialWave,
   initialTheme,
+  stations,
 }: {
   team: Team;
   judgeId: string;
   initialScans: ScanRow[];
   initialWave: Wave | null;
   initialTheme: "dark" | "light";
+  stations: StationDef[];
 }) {
   const theme = useSharedTheme(initialTheme);
   const supabase = useMemo(() => createClient(), []);
@@ -113,36 +116,93 @@ export default function ScanScreen({
   const [stoppedNoteStatus, setStoppedNoteStatus] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
-  const ended = hasWaveEnded(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
-  const next = getNextAction(scans);
-  const splits = buildSplits(scans, startTime);
-  const legs = buildLegs(splits);
-  const currentLegElapsedMs = getCurrentLegElapsedMs(scans, next, startTime, now);
+
+  // The server's own record of the heat ending (Realtime-synced). This is
+  // null if this device is offline and hasn't heard about it - which is
+  // exactly the gap locallyTimedOut below closes.
+  const serverEnded = hasWaveEnded(wave);
+
+  // This device's OWN clock reaching the 60-minute mark, independent of
+  // any network round-trip. A judge's phone knows its own elapsed time
+  // locally already (that's how the race clock itself works) - it
+  // shouldn't need permission from the server to act on that. This is
+  // what lets the heat freeze and the alert fire even if the phone has
+  // been offline since before the 60-minute mark passed.
+  const [locallyTimedOut, setLocallyTimedOut] = useState(false);
+  useEffect(() => {
+    // A genuine new start (or the heat being reopened) means this is a
+    // fresh 60 minutes, not a continuation of a previous one.
+    setLocallyTimedOut(false);
+  }, [wave?.actual_start]);
+
+  const ended = serverEnded || locallyTimedOut;
+
+  const next = getNextAction(scans, stations);
+  const splits = buildSplits(scans, startTime, stations);
+  const legs = buildLegs(scans, startTime, stations);
+
+  // The instant THIS team's own race actually stopped mattering, for
+  // freezing every displayed time - in priority order: the heat's real
+  // end (server-confirmed), this device's own 60-minute detection, or -
+  // most common case - the moment this specific team crossed the finish
+  // line. Without this last one, a team that finishes while other teams
+  // are still racing would see their own "elapsed" keep climbing forever,
+  // long after they actually stopped.
+  const finishedAt = next.isFinished ? splits.find((s) => s.isFinish)?.arrivedAt ?? null : null;
+  const frozenAt = wave?.actual_end
+    ? new Date(wave.actual_end).getTime()
+    : locallyTimedOut
+    ? new Date(startTime).getTime() + 60 * 60 * 1000
+    : finishedAt
+    ? new Date(finishedAt).getTime()
+    : null;
+  const displayNow = frozenAt ?? now;
+
+  const currentLegElapsedMs = getCurrentLegElapsedMs(scans, next, startTime, displayNow);
+
+  // Running is shown whenever the gap the team is currently in has a
+  // named run station in it, per the stations list - never something
+  // the judge confirms directly, purely a display of what's happening.
+  const currentlyRunning = next.runName != null;
 
   const atLabel = next.isFinished
     ? "Finished"
-    : next.eventType === "leave"
-    ? `${next.stationNumber} \u00b7 ${next.stationName}`
-    : next.stationNumber === 13
-    ? "Running to the finish"
-    : `Running to station ${next.stationNumber}`;
+    : currentlyRunning
+    ? `Running - ${next.runName}`
+    : `${next.displayNumber} \u00b7 ${next.stationName}`;
 
-  const afterStation =
+  // "Next" always names whatever genuinely happens next, in order.
+  // While CURRENTLY RUNNING (heading toward next.stationNumber), that
+  // upcoming real station IS "next" - shown directly, not skipped past.
+  // While AT a real station, "next" is the run coming up before the
+  // following real station (if the list has one there), otherwise that
+  // following real station itself. A run never gets a number of its
+  // own - it was never meant to count as a station.
+  const followingReal = !next.isFinished
+    ? withFinish(stations).find((s) => !s.isRun && s.number > next.stationNumber)
+    : null;
+  const runBeforeFollowingReal =
     !next.isFinished && next.eventType === "leave"
-      ? STATIONS.find((s) => s.number === next.stationNumber + 1)
+      ? stations.find(
+          (s) => s.isRun && s.number > next.stationNumber && (!followingReal || s.number < followingReal.number)
+        )
       : null;
   const nextLabel = next.isFinished
     ? null
-    : next.eventType === "leave"
-    ? afterStation
-      ? `${afterStation.number} \u00b7 ${afterStation.name}`
-      : "Finish"
-    : `${next.stationNumber} \u00b7 ${next.stationName}`;
+    : currentlyRunning
+    ? `${next.displayNumber} \u00b7 ${next.stationName}`
+    : runBeforeFollowingReal
+    ? runBeforeFollowingReal.name
+    : followingReal
+    ? `${realStationIndex(stations, followingReal.number)} \u00b7 ${followingReal.name}`
+    : "Finish";
 
-  // Fires the sound/vibration/banner alert the moment THIS device sees the
-  // heat end - not on page load if it had already ended earlier, only on
-  // the live transition from not-ended to ended.
+  // Fires the sound/vibration/banner alert the moment THIS device knows
+  // the heat has ended - including a fully offline device hitting its own
+  // 60-minute mark, not only a Realtime update from the server. Only on
+  // the live transition from not-ended to ended, never just because the
+  // page loaded after it had already ended.
   const wasEndedRef = useRef(ended);
   useEffect(() => {
     if (ended && !wasEndedRef.current) {
@@ -151,18 +211,27 @@ export default function ScanScreen({
     wasEndedRef.current = ended;
   }, [ended]);
 
-  // Once this team's heat has been running for 60 minutes, ping the
-  // auto-close endpoint. The endpoint itself re-checks the real elapsed
-  // time server-side before doing anything, so calling it slightly early
-  // (clock drift, a slow tick) is always a safe no-op.
+  // Once this team's heat has been running for 60 minutes - by this
+  // device's OWN clock, so this fires even with zero connectivity - it
+  // freezes and alerts itself immediately (see locallyTimedOut above),
+  // and ALSO tries to tell the server, purely so every other screen
+  // (other judges, the admin's live monitor) converges on the same
+  // state once anyone's back online. If the fetch fails because this
+  // phone is offline right now, that's fine - the interval keeps
+  // retrying quietly, and the local freeze/alert already happened
+  // regardless of whether this call ever succeeds.
   useEffect(() => {
     if (!started || ended || team.wave == null) return;
     const check = () => {
       const elapsed = Date.now() - new Date(startTime).getTime();
       if (elapsed >= 60 * 60 * 1000) {
+        setLocallyTimedOut(true);
         fetch(`/api/waves/${team.wave}/auto-close`, { method: "POST" }).catch(() => {
-          // Offline right at this moment - harmless, the next tick (or
-          // another judge's device) retries this automatically.
+          // Offline right now - harmless. The local freeze/alert above
+          // already happened; this is just telling the server, and the
+          // retry loop (see flushQueue-style handling elsewhere) isn't
+          // even needed here since this same effect re-fires every 5s
+          // for as long as `ended` stays false.
         });
       }
     };
@@ -217,8 +286,10 @@ export default function ScanScreen({
   // table in Supabase, a manual dashboard setting that's easy to miss.
   // This poll is a safety net: even if that setting is off, the clock
   // still starts within a few seconds on its own, with no refresh needed.
+  // Keeps running through the whole heat (not just until it starts) so
+  // the heat ENDING is caught the same way, without a refresh either.
   useEffect(() => {
-    if (team.wave == null || hasWaveStarted(wave)) return;
+    if (team.wave == null || hasWaveEnded(wave)) return;
     const poll = setInterval(async () => {
       const { data } = await supabase
         .from("waves")
@@ -331,6 +402,17 @@ export default function ScanScreen({
       queued_at: new Date().toISOString(),
     };
 
+    // Shown the instant the judge taps Confirm, before the network
+    // round-trip even starts - the whole point is that the next step
+    // appears immediately regardless of connection speed, not after
+    // waiting to hear back from the server. Reconciled below once the
+    // real request resolves, one way or another.
+    const optimisticId = -Date.now();
+    setScans((prev) => [
+      ...prev,
+      { id: optimisticId, station_number: stationNumber, event_type: eventType, scanned_at: payload.queued_at },
+    ]);
+
     const { data, error } = await supabase
       .from("scans")
       .insert(toScanInsert(payload))
@@ -339,6 +421,10 @@ export default function ScanScreen({
 
     if (error) {
       if (error.message?.includes("INVALID_SCAN")) {
+        // Genuinely wrong - the optimistic guess didn't hold up, so it
+        // has to come back out rather than leave the screen showing a
+        // step that never actually happened.
+        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
         setMessage(
           "That doesn't match this team's expected next step. Refreshing..."
         );
@@ -347,26 +433,29 @@ export default function ScanScreen({
       }
 
       if (error.code === "P0001") {
+        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
         setMessage(
           `Couldn't save this scan: ${error.message}. Tell the race organizer - this needs fixing, not just a retry.`
         );
         return;
       }
 
+      // Transient/offline - the optimistic entry already reflects this
+      // scan, so the screen doesn't need to change further; just make
+      // sure it actually gets synced later too.
       const list = readQueue(team.id);
       list.push(payload);
       writeQueue(team.id, list);
       refreshPendingCount();
-      setScans((prev) => [
-        ...prev,
-        { id: -Date.now(), ...payload, scanned_at: payload.queued_at },
-      ]);
       setMessage("Saved offline - will sync once you're back online.");
       return;
     }
 
-    setScans((prev) => [...prev, data]);
-    setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded for station ${stationNumber === 13 ? "FINISH" : stationNumber}.`);
+    // Swap the optimistic placeholder for the real row (accurate id and
+    // server timestamp) now that it's confirmed - same position in the
+    // list, so nothing visibly changes on screen.
+    setScans((prev) => prev.map((s) => (s.id === optimisticId ? data : s)));
+    setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded for station ${stationNumber === stations.length + 1 ? "FINISH" : realStationIndex(stations, stationNumber)}.`);
   }
 
   async function undoLast() {
@@ -415,7 +504,10 @@ export default function ScanScreen({
       data-theme={theme}
       className="ground min-h-screen bg-fofBlack text-fofPaper mx-auto max-w-md px-4 py-6"
     >
-      <Link href="/judge" className="text-sm text-fofGunmetal">
+      <Link
+        href="/judge"
+        className="tap-target mb-3 inline-flex items-center gap-1 rounded-md border border-fofGunmetal px-3 py-1.5 text-sm text-fofPaper hover:border-fofRed hover:text-fofRed"
+      >
         &larr; All teams
       </Link>
 
@@ -443,10 +535,8 @@ export default function ScanScreen({
               Heat {wave?.wave_number} has ended
             </p>
             <p className="font-display text-3xl">
-              {wave?.actual_end
-                ? formatDuration(
-                    new Date(wave.actual_end).getTime() - new Date(startTime).getTime()
-                  )
+              {frozenAt
+                ? formatDuration(frozenAt - new Date(startTime).getTime())
                 : "-"}
             </p>
             <p className="mt-2 text-xs text-fofGunmetal">
@@ -461,8 +551,8 @@ export default function ScanScreen({
                 WHERE DID THEY STOP?
               </h2>
               <p className="mb-2 text-xs text-fofGunmetal">
-                {next.eventType === "leave" && next.stationNumber <= 12
-                  ? `Last recorded at station ${next.stationNumber} - add a note for exactly where they were (e.g. "8 of 15 reps done").`
+                {next.eventType === "leave" && !next.isFinished
+                  ? `Last recorded at station ${next.displayNumber} - add a note for exactly where they were (e.g. "8 of 15 reps done").`
                   : "Add a note for exactly where they were when the heat ended."}
               </p>
               <textarea
@@ -507,11 +597,42 @@ export default function ScanScreen({
         </>
       ) : (
         <>
-          <section className="mt-6 rounded-lg border-2 border-fofRed p-4 text-center">
-            <p className="text-sm text-fofGunmetal">Race clock</p>
-            <p className="font-display text-3xl text-fofRed">
-              {formatDuration(now - new Date(startTime).getTime())}
-            </p>
+          <section
+            className={`mt-6 rounded-lg border p-4 ${
+              next.isFinished ? "border-green-600" : "border-fofCharcoal"
+            }`}
+          >
+            <div className="flex items-baseline justify-between">
+              <p className="text-sm text-fofGunmetal">
+                {next.isFinished ? "✓ Finish time" : "Race clock"}
+              </p>
+              <p
+                className={`font-display text-2xl ${
+                  next.isFinished ? "text-green-500" : "text-fofRed"
+                }`}
+              >
+                {formatDuration(displayNow - new Date(startTime).getTime())}
+              </p>
+            </div>
+
+            {!next.isFinished && (
+              <>
+                <div
+                  className={`mt-3 rounded-lg border-2 p-3 text-center ${
+                    currentlyRunning ? "border-blue-500" : "border-yellow-500"
+                  }`}
+                >
+                  <p className="font-display text-lg">{atLabel}</p>
+                  <p className="mt-1 font-display text-2xl text-fofRed">
+                    {currentLegElapsedMs != null ? formatDuration(currentLegElapsedMs) : "-"}
+                  </p>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-fofGunmetal">Next</span>
+                  <span className="text-fofPaper">{nextLabel}</span>
+                </div>
+              </>
+            )}
           </section>
 
           {pendingCount > 0 && (
@@ -525,32 +646,6 @@ export default function ScanScreen({
               >
                 Retry now
               </button>
-            </div>
-          )}
-
-          <div className="mt-4 rounded-lg border border-fofCharcoal p-3 text-center">
-            <p className="text-xs text-fofGunmetal">
-              {next.eventType === "leave" ? "At station" : "Currently"}
-            </p>
-            <p className="mt-1 font-display text-sm">
-              {next.isFinished ? "Finished" : atLabel}
-            </p>
-          </div>
-
-          {!next.isFinished && (
-            <div className="mt-2 flex gap-2">
-              <div className="flex-1 rounded-lg border-2 border-fofRed p-3 text-center">
-                <p className="text-xs text-fofGunmetal">
-                  {next.eventType === "leave" ? "Time at this station" : "Time on this run"}
-                </p>
-                <p className="font-display text-xl text-fofRed">
-                  {currentLegElapsedMs != null ? formatDuration(currentLegElapsedMs) : "-"}
-                </p>
-              </div>
-              <div className="flex-1 rounded-lg border border-fofCharcoal p-3 text-center">
-                <p className="text-xs text-fofGunmetal">Next</p>
-                <p className="mt-1 font-display text-sm text-fofGunmetal">{nextLabel}</p>
-              </div>
             </div>
           )}
 
@@ -582,11 +677,11 @@ export default function ScanScreen({
             </button>
           </div>
 
-          <section className="mt-8">
-            <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
+          <details className="mt-8 rounded-lg border border-fofCharcoal">
+            <summary className="cursor-pointer p-3 font-display text-sm tracking-wide text-fofGunmetal">
               LOG A PENALTY
-            </h2>
-            <form onSubmit={submitPenalty} className="space-y-2">
+            </summary>
+            <form onSubmit={submitPenalty} className="space-y-2 p-3 pt-0">
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -608,11 +703,11 @@ export default function ScanScreen({
                 type="submit"
                 className="tap-target w-full rounded-md border border-fofGunmetal font-display"
               >
-                Log penalty at station {next.stationNumber <= 12 ? next.stationNumber : 12}
+                Log penalty at station {next.displayNumber}
               </button>
               {penaltyStatus && <p className="text-sm text-fofGunmetal">{penaltyStatus}</p>}
             </form>
-          </section>
+          </details>
 
           <section className="mt-8">
             <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
@@ -629,10 +724,10 @@ export default function ScanScreen({
                   <li
                     key={i}
                     className={`flex justify-between py-1 ${
-                      isLive ? "border-b border-fofRed" : "border-b border-fofCharcoal"
+                      isLive ? "border-b-2 border-fofRed" : "border-b border-fofCharcoal"
                     }`}
                   >
-                    <span>
+                    <span className={isLive ? "font-medium text-fofPaper" : ""}>
                       {i + 1}. {leg.label}
                     </span>
                     <span

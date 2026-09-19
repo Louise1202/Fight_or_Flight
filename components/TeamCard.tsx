@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getNextAction, Scan } from "@/lib/timing";
+import { StationDef } from "@/lib/stations";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
 
@@ -83,11 +84,13 @@ export default function TeamCard({
   judgeId,
   initialScans,
   initialWave,
+  stations,
 }: {
   team: Team;
   judgeId: string;
   initialScans: ScanRow[];
   initialWave: Wave | null;
+  stations: StationDef[];
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
@@ -101,9 +104,20 @@ export default function TeamCard({
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
-  const ended = hasWaveEnded(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
-  const next = getNextAction(scans);
+  const next = getNextAction(scans, stations);
+
+  const serverEnded = hasWaveEnded(wave);
+
+  // This card's own clock reaching the 60-minute mark, independent of any
+  // network round-trip - see the matching comment in ScanScreen.tsx for
+  // why this can't just wait for a Realtime update.
+  const [locallyTimedOut, setLocallyTimedOut] = useState(false);
+  useEffect(() => {
+    setLocallyTimedOut(false);
+  }, [wave?.actual_start]);
+
+  const ended = serverEnded || locallyTimedOut;
 
   const wasEndedRef = useRef(ended);
   useEffect(() => {
@@ -118,6 +132,7 @@ export default function TeamCard({
     const check = () => {
       const elapsed = Date.now() - new Date(startTime).getTime();
       if (elapsed >= 60 * 60 * 1000) {
+        setLocallyTimedOut(true);
         fetch(`/api/waves/${team.wave}/auto-close`, { method: "POST" }).catch(() => {});
       }
     };
@@ -142,7 +157,7 @@ export default function TeamCard({
   }, [supabase, team.wave]);
 
   useEffect(() => {
-    if (team.wave == null || hasWaveStarted(wave)) return;
+    if (team.wave == null || hasWaveEnded(wave)) return;
     const poll = setInterval(async () => {
       const { data } = await supabase
         .from("waves")
@@ -221,19 +236,23 @@ export default function TeamCard({
     };
   }, [flushQueue, refreshPendingCount, team.id]);
 
-  async function confirm() {
-    if (submitting || next.isFinished) return;
-    setSubmitting(true);
-    setMessage(null);
-
+  async function doRecordScan(stationNumber: number, eventType: "arrive" | "leave") {
     const payload: PendingScan = {
       client_scan_id: newScanId(),
       team_id: team.id,
-      station_number: next.stationNumber,
-      event_type: next.eventType,
+      station_number: stationNumber,
+      event_type: eventType,
       judge_id: judgeId,
       queued_at: new Date().toISOString(),
     };
+
+    // Shown immediately on tap, before the network round-trip - see the
+    // matching comment in ScanScreen.tsx for the full reasoning.
+    const optimisticId = -Date.now();
+    setScans((prev) => [
+      ...prev,
+      { id: optimisticId, station_number: stationNumber, event_type: eventType, scanned_at: payload.queued_at },
+    ]);
 
     const { data, error } = await supabase
       .from("scans")
@@ -243,33 +262,33 @@ export default function TeamCard({
 
     if (error) {
       if (error.message?.includes("INVALID_SCAN")) {
+        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
         setMessage("Doesn't match this team's next step. Refreshing...");
         await refreshFromServer();
-        setSubmitting(false);
         return;
       }
       if (error.code === "P0001") {
+        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
         setMessage(`Couldn't save: ${error.message}. Tell the organizer.`);
-        setSubmitting(false);
         return;
       }
       const list = readQueue(team.id);
       list.push(payload);
       writeQueue(team.id, list);
       refreshPendingCount();
-      setScans((prev) => [
-        ...prev,
-        { id: -Date.now(), ...payload, scanned_at: payload.queued_at },
-      ]);
       setMessage("Saved offline - will sync once you're back online.");
-      setSubmitting(false);
       return;
     }
 
-    setScans((prev) => [...prev, data]);
-    setMessage(
-      `✓ ${payload.event_type === "arrive" ? "Arrival" : "Departure"} recorded.`
-    );
+    setScans((prev) => prev.map((s) => (s.id === optimisticId ? data : s)));
+    setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded.`);
+  }
+
+  async function confirm() {
+    if (submitting || next.isFinished) return;
+    setSubmitting(true);
+    setMessage(null);
+    await doRecordScan(next.stationNumber, next.eventType);
     setSubmitting(false);
   }
 
@@ -328,8 +347,12 @@ export default function TeamCard({
         </>
       ) : (
         <>
-          <p className="mt-1 text-sm text-fofRed">
-            {next.isFinished ? "Finished" : `Next: ${next.label}`}
+          <p className={`mt-1 text-sm ${next.runName ? "text-blue-400" : "text-fofRed"}`}>
+            {next.isFinished
+              ? "Finished"
+              : next.runName
+              ? `🏃 Running - ${next.runName}`
+              : `Next: ${next.label}`}
           </p>
 
           {pendingCount > 0 && (

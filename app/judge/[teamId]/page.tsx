@@ -31,7 +31,7 @@ export default async function JudgeScanPage({
     .maybeSingle();
   if (!team) notFound();
 
-  const [{ data: scans }, { data: wave }, { data: settings }] = await Promise.all([
+  const [{ data: scans }, { data: wave }, { data: settings }, { data: stations }] = await Promise.all([
     supabase
       .from("scans")
       .select("id, station_number, event_type, scanned_at")
@@ -45,6 +45,7 @@ export default async function JudgeScanPage({
           .maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from("app_settings").select("theme").eq("id", 1).maybeSingle(),
+    supabase.from("stations").select("number, name, is_run").order("number"),
   ]);
 
   return (
@@ -54,6 +55,7 @@ export default async function JudgeScanPage({
       initialScans={scans ?? []}
       initialWave={wave ?? null}
       initialTheme={settings?.theme === "light" ? "light" : "dark"}
+      stations={(stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))}
     />
   );
 }

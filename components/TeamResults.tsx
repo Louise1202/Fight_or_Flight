@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { buildSplits, buildLegs, formatDuration, getNextAction, Scan } from "@/lib/timing";
-import { effectiveStartTime, hasWaveStarted, Wave } from "@/lib/waves";
+import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
+import { StationDef } from "@/lib/stations";
 import { CONGRATS_MESSAGES } from "@/lib/congratsMessages";
 import LogoutButton from "./LogoutButton";
 
@@ -14,6 +15,7 @@ type Team = {
   athlete_2: string | null;
   start_time: string;
   wave: number | null;
+  stopped_note: string | null;
 };
 
 type ScanRow = Scan & { id: number };
@@ -23,15 +25,18 @@ export default function TeamResults({
   initialScans,
   penalties,
   initialWave,
+  stations,
 }: {
   team: Team;
   initialScans: ScanRow[];
   penalties: { station_number: number; penalty_seconds: number; notes: string | null }[];
   initialWave: Wave | null;
+  stations: StationDef[];
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
   const [wave, setWave] = useState<Wave | null>(initialWave);
+  const [stoppedNote, setStoppedNote] = useState<string | null>(team.stopped_note);
   const [now, setNow] = useState(Date.now());
   // Picked once on load (not on every re-render/tick) so it doesn't
   // change while the team is looking at their own results.
@@ -78,9 +83,10 @@ export default function TeamResults({
 
   // Safety net alongside Realtime above, in case Realtime isn't enabled
   // for the waves table - the team's own clock still starts within a
-  // few seconds on its own either way, with no refresh needed.
+  // few seconds on its own either way, with no refresh needed. Keeps
+  // running through the whole heat so it ending is caught the same way.
   useEffect(() => {
-    if (team.wave == null || hasWaveStarted(wave)) return;
+    if (team.wave == null || hasWaveEnded(wave)) return;
     const poll = setInterval(async () => {
       const { data } = await supabase
         .from("waves")
@@ -93,27 +99,50 @@ export default function TeamResults({
   }, [supabase, team.wave, wave]);
 
   useEffect(() => {
+    const channel = supabase
+      .channel(`team-${team.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${team.id}` },
+        (payload) => setStoppedNote((payload.new as { stopped_note: string | null }).stopped_note)
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, team.id]);
+
+  useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
 
   const started = hasWaveStarted(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
-  const splits = buildSplits(scans, startTime);
-  const legs = buildLegs(splits);
-  const next = getNextAction(scans);
+  const splits = buildSplits(scans, startTime, stations);
+  const legs = buildLegs(scans, startTime, stations);
+  const next = getNextAction(scans, stations);
   const totalPenaltySeconds = penalties.reduce((sum, p) => sum + p.penalty_seconds, 0);
 
-  const finishScan = scans.find((s) => s.station_number === 13);
+  const finishScan = scans.find((s) => s.station_number === stations.length + 1);
   const rawMs = finishScan
     ? new Date(finishScan.scanned_at).getTime() - new Date(startTime).getTime()
     : null;
   const finalMs = rawMs != null ? rawMs + totalPenaltySeconds * 1000 : null;
-  const liveElapsedMs = started ? now - new Date(startTime).getTime() : null;
+
+  // The heat ended before this team ever reached the finish line - frozen
+  // exactly where they were, not still ticking against the live clock.
+  const stopped = finalMs == null && hasWaveEnded(wave);
+  const frozenAt = stopped && wave?.actual_end ? new Date(wave.actual_end).getTime() : null;
+  const liveElapsedMs = !started
+    ? null
+    : frozenAt != null
+    ? frozenAt - new Date(startTime).getTime()
+    : now - new Date(startTime).getTime();
 
   return (
     <main className="mx-auto max-w-md px-4 py-6">
-      {finalMs != null && (
+      {(finalMs != null || stopped) && (
         <div className="relative mx-auto mb-2 mt-10" style={{ width: 260 }}>
           <svg
             viewBox="0 0 260 100"
@@ -147,7 +176,7 @@ export default function TeamResults({
         <LogoutButton />
       </header>
 
-      {finalMs != null && (
+      {(finalMs != null || stopped) && (
         <p className="mb-4 text-center font-display text-lg text-fofPaper">
           {congratsLine}
         </p>
@@ -169,6 +198,16 @@ export default function TeamResults({
                 {formatDuration(finalMs)}
               </p>
             </>
+          ) : stopped ? (
+            <>
+              <p className="text-sm text-fofGunmetal">Heat ended</p>
+              <p className="font-display text-3xl text-fofRed">
+                {formatDuration(liveElapsedMs ?? 0)}
+              </p>
+              {stoppedNote && (
+                <p className="mt-2 text-sm text-fofPaper">{stoppedNote}</p>
+              )}
+            </>
           ) : (
             <>
               <p className="text-sm text-fofGunmetal">Race clock</p>
@@ -176,9 +215,9 @@ export default function TeamResults({
                 {formatDuration(liveElapsedMs ?? 0)}
               </p>
               <p className="mt-1 text-sm text-fofGunmetal">
-                {next.stationNumber <= 12
-                  ? `Station ${next.stationNumber}: ${next.stationName}`
-                  : "On the way to the finish"}
+                {next.runName
+                  ? `Running - ${next.runName}`
+                  : `Station ${next.displayNumber}: ${next.stationName}`}
               </p>
             </>
           )}

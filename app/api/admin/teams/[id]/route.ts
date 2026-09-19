@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { heatIdPrefix, nextTeamId } from "@/lib/teamId";
+import { heatIdPrefix, nextTeamId, positionOf, renameForPosition } from "@/lib/teamId";
+import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
+
+// Always dynamic - this hits the live database on every request and
+// must never be statically pre-rendered at build time (a build-time DB
+// call against real, ever-changing data is exactly what crashed the
+// build once already).
+export const dynamic = "force-dynamic";
 
 const EDITABLE_FIELDS = [
   "team_name",
@@ -44,7 +51,7 @@ export async function PATCH(
 
   const { data: current, error: currentErr } = await admin
     .from("teams")
-    .select("id, wave")
+    .select("id, wave, team_name")
     .eq("id", params.id)
     .maybeSingle();
   if (currentErr) return NextResponse.json({ error: currentErr.message }, { status: 500 });
@@ -97,14 +104,31 @@ export async function PATCH(
       .filter((t) => t.wave === destWave && t.id !== params.id)
       .map((t) => t.id);
 
-    update.id = nextTeamId(heatIdPrefix(heat.scheduled_start), idsInHeat, allIds);
+    const newId = nextTeamId(heatIdPrefix(heat.scheduled_start), idsInHeat, allIds);
+    update.id = newId;
     // Keep the legacy fallback column pointed at the new heat's plan.
     update.start_time = heat.scheduled_start;
+
+    // The name's own position label needs to track the move too - "Team
+    // 01" landing at position 9 in its new heat becomes "Team 09". Uses
+    // whatever name this same request is already setting, if any,
+    // otherwise the team's current name. A custom name with no number in
+    // it is left completely untouched.
+    const nameToRename = (update.team_name as string | undefined) ?? current.team_name;
+    update.team_name = renameForPosition(nameToRename, positionOf(newId));
   }
 
   const { error } = await admin.from("teams").update(update).eq("id", params.id);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Closes the gap left behind in the OLD heat (everyone after this
+  // team's old position there shifts down, id and name both) - this is
+  // the same automatic fixer that runs on every admin page load, just
+  // triggered right now instead of waiting for the next one.
+  if (movingHeat) {
+    await autoFixTeamIds();
   }
 
   return NextResponse.json({ ok: true, id: update.id ?? params.id });

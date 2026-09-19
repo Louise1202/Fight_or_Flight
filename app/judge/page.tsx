@@ -29,7 +29,7 @@ export default async function JudgeHome() {
   const teams = (assignments ?? []).map((a: any) => a.teams);
   const teamIds = teams.map((t) => t.id);
 
-  const [{ data: allScans }, { data: waves }, { data: settings }] = await Promise.all([
+  const [{ data: allScans }, { data: waves }, { data: settings }, { data: stations }] = await Promise.all([
     teamIds.length
       ? supabase
           .from("scans")
@@ -39,6 +39,7 @@ export default async function JudgeHome() {
       : Promise.resolve({ data: [] as any[] }),
     supabase.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
     supabase.from("app_settings").select("theme").eq("id", 1).maybeSingle(),
+    supabase.from("stations").select("number, name, is_run").order("number"),
   ]);
 
   const scansByTeam: Record<string, (Scan & { id: number })[]> = {};
@@ -59,6 +60,7 @@ export default async function JudgeHome() {
       scansByTeam={scansByTeam}
       wavesByNumber={wavesByNumber}
       initialTheme={settings?.theme === "light" ? "light" : "dark"}
+      stations={(stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))}
     />
   );
 }
