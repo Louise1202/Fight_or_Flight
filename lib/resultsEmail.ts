@@ -30,7 +30,7 @@ export function emailConfigured(): boolean {
   return !!process.env.RESEND_API_KEY;
 }
 
-function fromAddress(event: Pick<EventRow, "name">): string {
+export function fromAddress(event: Pick<EventRow, "name">): string {
   if (process.env.RESULTS_EMAIL_FROM) return process.env.RESULTS_EMAIL_FROM;
   // Display names can't contain quotes or angle brackets unescaped.
   const name = event.name.replace(/["<>\r\n]/g, "").trim() || "Survivor";
@@ -295,7 +295,15 @@ ${recordLine ? `<tr><td style="padding:2px 20px 8px 20px;font-size:14px;color:#1
 
 type SendResult = { ok: true; id: string | null } | { ok: false; error: string };
 
-async function sendViaResend(msg: { from: string; to: string[]; subject: string; html: string; text: string }): Promise<SendResult> {
+export async function sendViaResend(msg: {
+  from: string;
+  to: string[];
+  subject: string;
+  html: string;
+  text: string;
+  /** Base64 file contents, e.g. the Island Pass PNG. */
+  attachments?: { filename: string; content: string }[];
+}): Promise<SendResult> {
   const key = process.env.RESEND_API_KEY;
   if (!key) return { ok: false, error: "not configured" };
   try {

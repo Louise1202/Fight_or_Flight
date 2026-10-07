@@ -4,6 +4,8 @@ import { getEventById } from "@/lib/activeEvent";
 import { TEAM_TYPES } from "@/lib/events";
 import { callerKey, allowRequest } from "@/lib/rateLimit";
 import { usernameToEmail } from "@/lib/username";
+import { passToken } from "@/lib/islandPass";
+import { sendRegisteredEmail } from "@/lib/registeredEmail";
 import {
   CONSENT_SECTIONS,
   FINAL_DECLARATION,
@@ -132,6 +134,9 @@ function validateMember(raw: unknown, position: 1 | 2, gender: "male" | "female"
   };
 }
 
+// The pass picture and the email can take a few seconds.
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest) {
   // 1. Size: signatures make the body large, but never this large.
   const declared = Number(req.headers.get("content-length") ?? "0");
@@ -255,8 +260,21 @@ export async function POST(req: NextRequest) {
     console.error("register: team login not created", "exception");
   }
 
+  // 9. "You're registered" email with the Island Pass. Never blocks or
+  // fails the sign-up: at most ~8 seconds, then the screen shows anyway.
+  const finalName = teamName || `Team ${teamId}`;
+  let emailed = false;
+  try {
+    emailed = await Promise.race([
+      sendRegisteredEmail({ event, teamId, teamName: finalName, division: type.division, members }),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
+    ]);
+  } catch {
+    emailed = false;
+  }
+
   return NextResponse.json(
-    { ok: true, teamId, username, loginCreated, teamName: teamName || `Team ${teamId}` },
+    { ok: true, teamId, username, loginCreated, teamName: finalName, passToken: passToken(teamId), emailed },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

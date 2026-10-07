@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PasswordInput from "@/components/PasswordInput";
-import { TEAM_TYPES, type Brand, type Division } from "@/lib/events";
+import { TEAM_TYPES, formatEventDate, type Brand, type Division } from "@/lib/events";
 import {
   CONSENT_SECTIONS,
   FINAL_DECLARATION,
@@ -74,6 +74,10 @@ type Result = {
   teamName: string;
   division: Division;
   athletes: Pair<string>;
+  /** Signed token for the Island Pass picture (null if the server didn't send one). */
+  passToken: string | null;
+  /** Whether the "You're registered" email went out. */
+  emailed: boolean;
 };
 
 const SA_TIME = new Intl.DateTimeFormat("en-ZA", {
@@ -528,6 +532,8 @@ export default function RegistrationForm({ event, brand }: { event: PublicEvent;
         username?: string;
         loginCreated?: boolean;
         teamName?: string;
+        passToken?: string;
+        emailed?: boolean;
       };
       if (res.ok && json.ok && json.teamId) {
         setResult({
@@ -537,6 +543,8 @@ export default function RegistrationForm({ event, brand }: { event: PublicEvent;
           teamName: json.teamName ?? `Team ${json.teamId}`,
           division,
           athletes: names,
+          passToken: typeof json.passToken === "string" ? json.passToken : null,
+          emailed: json.emailed === true,
         });
         requestAnimationFrame(() => window.scrollTo({ top: 0 }));
         return;
@@ -1008,8 +1016,32 @@ export default function RegistrationForm({ event, brand }: { event: PublicEvent;
 
 function Confirmation({ result, event, brand }: { result: Result; event: PublicEvent; brand: Brand }) {
   const [copied, setCopied] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const idRef = useRef<HTMLParagraphElement>(null);
   const type = useMemo(() => TEAM_TYPES.find((t) => t.division === result.division), [result.division]);
+  const firstNames = result.athletes.map((n) => n.trim().split(/\s+/)[0]).filter(Boolean);
+  const hello = firstNames.length === 2 ? `${firstNames[0]} & ${firstNames[1]}` : firstNames[0] ?? "";
+  const year = event.event_date.slice(0, 4);
+
+  useEffect(() => {
+    import("qrcode")
+      .then((QR) => QR.toDataURL(`${event.name.toUpperCase()}:${result.teamId}`, { margin: 1, width: 300 }))
+      .then(setQr)
+      .catch(() => setQr(null));
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, [event.name, result.teamId]);
+
+  // Race day, at check-in time, in South African time (UTC+2).
+  const raceStart = useMemo(() => {
+    const [y, m, d] = event.event_date.slice(0, 10).split("-").map(Number);
+    const [hh, mm] = (event.registration_time ?? "06:00").split(":").map((v) => Number(v) || 0);
+    return Date.UTC(y, m - 1, d, hh, mm) - 2 * 3600 * 1000;
+  }, [event.event_date, event.registration_time]);
+  const left = Math.max(0, raceStart - now);
+  const days = Math.floor(left / 86_400_000);
+  const hours = Math.floor((left % 86_400_000) / 3_600_000);
 
   async function copy() {
     try {
@@ -1033,53 +1065,198 @@ function Confirmation({ result, event, brand }: { result: Result; event: PublicE
     }
   }
 
-  const be = [event.registration_time, event.venue].filter(Boolean);
+  const signupUrl = typeof window !== "undefined" ? `${window.location.origin}/register` : "/register";
+  const whatsapp = `https://wa.me/?text=${encodeURIComponent(
+    `We're in ${event.name} on ${formatEventDate(event.event_date)}${event.venue ? ` at ${event.venue}` : ""}! Sign up your team: ${signupUrl}`
+  )}`;
+
+  function addToCalendar() {
+    const [y, m, d] = event.event_date.slice(0, 10).split("-");
+    const start = new Date(raceStart);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const utc = (dt: Date) =>
+      `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}00Z`;
+    const end = new Date(raceStart + 5 * 3600 * 1000);
+    const esc = (v: string) => v.replace(/[\\,;]/g, (c) => `\\${c}`).replace(/\n/g, "\\n");
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Race Timing//EN",
+      "BEGIN:VEVENT",
+      `UID:${result.teamId}-${y}${m}${d}@race.betterdesk.app`,
+      `DTSTAMP:${utc(new Date())}`,
+      `DTSTART:${utc(start)}`,
+      `DTEND:${utc(end)}`,
+      `SUMMARY:${esc(`${event.name} - ${result.teamName} (${result.teamId})`)}`,
+      event.venue ? `LOCATION:${esc(event.venue)}` : "",
+      `DESCRIPTION:${esc(`Check-in from ${event.registration_time ?? "06:00"}. Team ID ${result.teamId}. Bring water, a towel and your medical info.`)}`,
+      "BEGIN:VALARM",
+      "TRIGGER:-P1D",
+      "ACTION:DISPLAY",
+      `DESCRIPTION:${esc(`${event.name} is tomorrow`)}`,
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+    const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${event.name}-${result.teamId}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  const passHref = result.passToken ? `/api/register/pass?t=${encodeURIComponent(result.passToken)}&download=1` : null;
+  const ACTION = "tap-target flex items-center justify-center rounded-md border border-fofRule bg-fofPanel px-3 text-center text-sm text-fofPaper hover:border-fofRed";
 
   return (
     <div>
-      <EventHeader event={event} brand={brand} compact />
-      <h2 tabIndex={-1} className="mt-8 text-center font-display text-4xl tracking-wide text-fofPaper">
-        You&apos;re registered
-      </h2>
+      {/* Just the event's logo on top - nothing else. */}
+      <img
+        src={brand.logo}
+        alt={`${event.name} logo`}
+        width={150}
+        height={150}
+        className={`mx-auto h-[150px] w-[150px] ${brand.logoRound ? "logo-round" : "rounded-full"}`}
+      />
 
-      <div className="mt-6 rounded-xl border-2 border-dashed border-fofRed bg-fofPanel px-4 py-6 text-center">
-        <p className="text-xs uppercase tracking-widest text-fofGunmetal">Your Team ID</p>
-        <p ref={idRef} className="nums mt-1 select-all text-6xl font-semibold tracking-wider text-fofPaper">
-          {result.teamId}
+      <div className="mt-5 text-center">
+        <h2 tabIndex={-1} className="font-marker text-4xl leading-tight text-fofPaper">
+          Congratulations!
+        </h2>
+        <p className="font-marker text-2xl text-fofRed">You&apos;re on the island</p>
+        <p className="mx-auto mt-3 max-w-sm text-[17px] leading-snug text-fofPaper">
+          {hello ? `${hello}, we're ` : "We're "}
+          <span className="text-fofRed">so excited</span> to see you
+          {event.venue ? ` at ${event.venue}` : ""} on {formatEventDate(event.event_date)}.
         </p>
-        <p className="mt-3 text-sm text-fofGunmetal">Screenshot this. It stays the same, even when heats change.</p>
-        <button
-          type="button"
-          onClick={copy}
-          className="tap-target mt-4 w-full rounded-md border border-fofGunmetal font-display text-lg tracking-wide text-fofPaper hover:border-fofRed"
-        >
-          {copied ? "✓ Copied" : "Copy Team ID"}
+      </div>
+
+      {/* Island Pass */}
+      <section
+        aria-label="Island Pass"
+        className="relative mt-6 overflow-hidden rounded-2xl border border-fofRed"
+        style={{ background: "linear-gradient(160deg, var(--fof-panel), var(--fof-black))" }}
+      >
+        <div className="flex items-center justify-between border-b border-dashed border-fofRed px-4 py-3" style={{ background: "rgba(var(--fof-glow-rgb), 0.12)" }}>
+          <span className="font-display text-sm tracking-[0.18em] text-fofPaper">
+            ISLAND PASS · {event.name.toUpperCase()} {year}
+          </span>
+          {type && <span className="nums text-xs text-fofGunmetal">{type.division.toUpperCase()}</span>}
+        </div>
+        <div className="flex items-center justify-between gap-3 px-4 py-4">
+          <div className="min-w-0">
+            <p className="nums text-[11px] tracking-widest text-fofGunmetal">TEAM ID</p>
+            <p ref={idRef} className="nums select-all text-5xl font-semibold leading-none tracking-wider text-fofPaper">
+              {result.teamId}
+            </p>
+            <p className="mt-2 truncate text-lg font-semibold text-fofPaper">{result.teamName}</p>
+            <p className="text-sm text-fofGunmetal">
+              {result.athletes[0]} &amp; {result.athletes[1]}
+            </p>
+          </div>
+          {qr ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={qr} alt="" className="h-24 w-24 shrink-0 rounded-md bg-white p-1" />
+          ) : (
+            <div className="h-24 w-24 shrink-0 rounded-md bg-fofCharcoal" />
+          )}
+        </div>
+        <div className="grid grid-cols-3 border-t border-dashed border-fofRed text-center">
+          <PassCell label="DATE" value={formatEventDate(event.event_date).replace(/ \d{4}$/, "")} />
+          <PassCell label="CHECK-IN" value={event.registration_time ?? "-"} />
+          <PassCell label="HEAT" value="Coming soon" last />
+        </div>
+      </section>
+      <p className="mt-2 text-center text-sm text-fofGunmetal">
+        Your Team ID stays the same, even when heats change. Show this pass at check-in.
+      </p>
+
+      {/* Countdown */}
+      {left > 0 && (
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+          <Count value={days} label="DAYS" />
+          <Count value={hours} label="HOURS" />
+          <Count value={12} label="STATIONS" />
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="mt-5 grid grid-cols-2 gap-2">
+        {passHref && (
+          <a
+            href={passHref}
+            download={`Island-Pass-${result.teamId}.png`}
+            className="tap-target btn-stamped col-span-2 flex items-center justify-center rounded-md font-display text-lg tracking-wide"
+          >
+            Save my Island Pass
+          </a>
+        )}
+        <a href={whatsapp} target="_blank" rel="noopener noreferrer" className={`${ACTION} border-[#25D366]`}>
+          Tell your friends on WhatsApp
+        </a>
+        <button type="button" onClick={addToCalendar} className={ACTION}>
+          Add to my calendar
+        </button>
+        <button type="button" onClick={copy} className={`${ACTION} col-span-2`}>
+          {copied ? "✓ Team ID copied" : "Copy Team ID"}
         </button>
         <p aria-live="polite" className="sr-only">
           {copied ? "Team ID copied" : ""}
         </p>
       </div>
 
-      <dl className="mt-6 divide-y divide-fofRule rounded-lg border border-fofRule bg-fofPanel">
-        <Row label="Team">
-          {result.teamName}
-          {type && <span className="text-fofGunmetal"> · {type.label}</span>}
-        </Row>
-        <Row label="Athletes">
-          {result.athletes[0]} &amp; {result.athletes[1]}
-        </Row>
-        <Row label="Heat">The organisers will let you know</Row>
-        {be.length > 0 && <Row label="Be there">{be.join(" at ")}</Row>}
-        <Row label="Team login">
-          <span className="nums">{result.username}</span>
-        </Row>
-      </dl>
-
       {!result.loginCreated && (
         <p role="status" className="mt-4 rounded-md border border-fofRed px-4 py-3 text-sm text-fofPaper">
           Your team is registered, but the login couldn&apos;t be created. The organisers will set it up for you.
         </p>
       )}
+
+      {/* What happens next */}
+      <section className="mt-6">
+        <h3 className="font-display text-xl tracking-wide text-fofPaper">What happens next</h3>
+        <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px] text-fofPaper">
+          {(event.entry_fee || event.bank_details) && (
+            <li>
+              <b>Pay your entry fee</b>
+              {event.entry_fee ? ` (${event.entry_fee})` : ""}
+              <span className="text-fofGunmetal">
+                {" "}
+                - use <b className="nums text-fofPaper">{result.teamId}</b> as your reference.
+              </span>
+            </li>
+          )}
+          <li>
+            <b>Your heat</b> <span className="text-fofGunmetal">- we&apos;ll email you your heat and start time.</span>
+          </li>
+          <li>
+            <b>Race day</b>{" "}
+            <span className="text-fofGunmetal">
+              - check in from {event.registration_time ?? "06:00"}
+              {event.venue ? ` at ${event.venue}` : ""} and show your Island Pass.
+            </span>
+          </li>
+        </ol>
+        <p className="mt-3 text-sm text-fofGunmetal">
+          Your team login is <span className="nums text-fofPaper">{result.username}</span> with the password you chose - use it
+          on race day to follow your race live.
+        </p>
+      </section>
+
+      <section className="mt-5">
+        <h3 className="font-display text-xl tracking-wide text-fofPaper">What to bring</h3>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {["Water bottle", "Towel", "Your medical info", "Inhaler / medication", "Sunscreen", "Your partner"].map((x) => (
+            <span key={x} className="rounded-full border border-fofRule px-3 py-1 text-sm text-fofGunmetal">
+              {x}
+            </span>
+          ))}
+        </div>
+      </section>
 
       {(event.entry_fee || event.bank_details) && (
         <section className="mt-6 rounded-lg border border-fofRed bg-fofPanel p-4">
@@ -1093,6 +1270,30 @@ function Confirmation({ result, event, brand }: { result: Result; event: PublicE
           </p>
         </section>
       )}
+
+      {result.emailed && (
+        <p className="mt-5 text-center text-sm text-fofGunmetal">
+          We&apos;ve emailed a copy of your Island Pass to both of you.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function PassCell({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
+  return (
+    <div className={`px-2 py-3 ${last ? "" : "border-r border-dashed border-fofRed"}`}>
+      <p className="nums text-[10px] tracking-widest text-fofGunmetal">{label}</p>
+      <p className="text-[15px] font-semibold text-fofPaper">{value}</p>
+    </div>
+  );
+}
+
+function Count({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-lg border border-fofRule bg-fofPanel py-2">
+      <p className="nums text-2xl leading-none text-fofPaper">{value}</p>
+      <p className="mt-1 text-[11px] tracking-widest text-fofGunmetal">{label}</p>
     </div>
   );
 }
