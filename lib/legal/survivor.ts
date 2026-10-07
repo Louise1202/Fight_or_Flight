@@ -225,7 +225,7 @@ export const PRIVACY: LegalSection = {
     "Information will be retained only for as long as reasonably necessary for the purposes for which it was collected, subject to applicable legal and operational requirements.",
     // Added by the developer (not in the organiser's form), because
     // athletes' names are shown next to their team on public pages, and
-    // results are emailed. CONFIRM with the organiser.
+    // results are emailed. Approved by the organiser 2026-10-07.
     "Your names, team name and race results will be shown publicly on the live results, on the big screen at the venue and on the results page after the event. Contact details and medical information are never shown.",
     "We will email your results to the address you gave.",
   ],
