@@ -46,9 +46,8 @@ function Form({ brand }: { brand: LoginBrand }) {
       password,
     });
 
-    setLoading(false);
-
     if (signInError) {
+      setLoading(false);
       // Supabase Auth limits repeated attempts itself (status 429).
       setError(
         signInError.status === 429
@@ -58,6 +57,7 @@ function Form({ brand }: { brand: LoginBrand }) {
       return;
     }
 
+    // Stays on "Logging in..." until the next page has opened.
     router.push("/");
     router.refresh();
   }

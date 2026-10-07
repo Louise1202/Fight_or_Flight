@@ -8,7 +8,9 @@ import { passToken } from "@/lib/islandPass";
 import { sendRegisteredEmail } from "@/lib/registeredEmail";
 import { sendPartnerInvite, sendSpotBooked } from "@/lib/partnerEmail";
 import { signToken } from "@/lib/partnerLink";
-import { alertSafely } from "@/lib/adminAlerts";
+import { sendAdminAlert } from "@/lib/adminAlerts";
+import { emailConfigured } from "@/lib/resultsEmail";
+import { inBackground } from "@/lib/background";
 import { isObject, validateBasic, validateSigned, type BasicMember, type SignedAnswers } from "@/lib/registerMember";
 import {
   PASSWORD_MAX,
@@ -180,32 +182,21 @@ export async function POST(req: NextRequest) {
     console.error("register: team login not created", "exception");
   }
 
-  // 9. Emails. Never block or fail the sign-up: at most ~8 seconds.
+  // 9. Emails go out after the reply, so the athlete sees their screen at once:
   //    Both signed: "You're registered" with the Island Pass to both.
   //    Partner signs later: the sign link to athlete 2, "Spot booked" to athlete 1.
+  //    Then the registration alert to the organisers' own list.
   const finalName = teamName || `Team ${teamId}`;
-  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000));
-  let emailed = false;
-  try {
+  const emailed = emailConfigured();
+  inBackground(async () => {
     if (partnerLater) {
       const input = { event, teamId, teamName: finalName, booker: members[0], partner: members[1] };
-      const [invite] = await Promise.race([
-        Promise.all([sendPartnerInvite(input), sendSpotBooked(input)]),
-        timeout.then(() => [false, false] as const),
-      ]);
-      emailed = invite;
+      await Promise.all([sendPartnerInvite(input).catch(() => false), sendSpotBooked(input).catch(() => false)]);
     } else {
-      emailed = await Promise.race([
-        sendRegisteredEmail({ event, teamId, teamName: finalName, division: type.division, members }),
-        timeout,
-      ]);
+      await sendRegisteredEmail({ event, teamId, teamName: finalName, division: type.division, members }).catch(() => false);
     }
-  } catch {
-    emailed = false;
-  }
-
-  // 10. Registration alert to the organisers (their own list in admin).
-  await alertSafely(admin, event, teamId, partnerLater ? "booked" : "confirmed");
+    await sendAdminAlert(admin, event, teamId, partnerLater ? "booked" : "confirmed");
+  });
 
   return NextResponse.json(
     {

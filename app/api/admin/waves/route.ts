@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
 import { chunk } from "@/lib/fetchAll";
 import { processResultEmailsSafely } from "@/lib/resultsEmail";
+import { inBackground } from "@/lib/background";
 import { adminContext, AdminClient, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
 // Always dynamic - this hits the live database on every request.
@@ -103,7 +104,9 @@ export async function PATCH(req: NextRequest) {
   }
   // Results emails for this heat's teams. Short time budget, never fails
   // the action; anything left over is sent by the every-minute cron.
-  await processResultEmailsSafely(event.id, 6000);
+  // Results emails go out after the reply - the admin never waits for them
+  // (the every-minute cron picks up anything left over).
+  inBackground(() => processResultEmailsSafely(event.id, 6000));
   return json({ ok: true, wave: data[0] });
 }
 

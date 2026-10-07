@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { processResultEmailsSafely } from "@/lib/resultsEmail";
+import { inBackground } from "@/lib/background";
 
 // Always dynamic - this hits the live database on every request and
 // must never be statically pre-rendered at build time.
@@ -61,6 +62,6 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: "Couldn't close the heat" }, { status: 500 });
   // Results emails for this heat's teams (only the phone that actually
   // closed it triggers this). Never fails the request; the cron covers the rest.
-  if (data) await processResultEmailsSafely(eventId, 6000);
+  if (data) inBackground(() => processResultEmailsSafely(eventId, 6000));
   return NextResponse.json({ ok: true, closed: !!data });
 }

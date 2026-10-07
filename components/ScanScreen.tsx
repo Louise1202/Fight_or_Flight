@@ -154,6 +154,8 @@ export default function ScanScreen({
     return () => clearTimeout(t);
   }, [confirmUndo]);
 
+  const savingPenalty = useRef(false);
+
   async function onUndo() {
     if (!confirmUndo) {
       setConfirmUndo(true);
@@ -164,7 +166,7 @@ export default function ScanScreen({
   }
 
   async function saveStoppedNote() {
-    setStoppedNoteStatus(null);
+    setStoppedNoteStatus("Saving…");
     const { error } = await supabase.rpc("set_stopped_note", { p_team_id: team.id, p_note: stoppedNote });
     setStoppedNoteStatus(
       error ? friendlyDbError(error.code, "Couldn't save - check your connection and try again.") : "Saved."
@@ -173,12 +175,14 @@ export default function ScanScreen({
 
   async function submitPenalty(e: React.FormEvent) {
     e.preventDefault();
-    setPenaltyStatus(null);
+    if (savingPenalty.current) return; // a second tap would log it twice
     const seconds = parseInt(penaltySeconds, 10);
     if (!seconds || seconds <= 0) {
       setPenaltyStatus("Enter a number of seconds greater than 0.");
       return;
     }
+    savingPenalty.current = true;
+    setPenaltyStatus("Saving…");
     const { error } = await supabase.from("penalties").insert({
       team_id: team.id,
       station_number: next.stationNumber,
@@ -186,6 +190,7 @@ export default function ScanScreen({
       judge_id: judgeId,
       notes: penaltyNote.trim().slice(0, 200) || null,
     });
+    savingPenalty.current = false;
     if (error) {
       setPenaltyStatus(friendlyDbError(error.code, "Couldn't save - check your connection and try again."));
       return;

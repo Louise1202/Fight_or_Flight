@@ -61,14 +61,18 @@ export default function TeamCard({
     wasEndedRef.current = ended;
   }, [ended]);
 
+  const savingPenalty = useRef(false);
+
   async function submitPenalty(e: React.FormEvent) {
     e.preventDefault();
-    setPenaltyStatus(null);
+    if (savingPenalty.current) return; // a second tap would log it twice
     const seconds = parseInt(penaltySeconds, 10);
     if (!seconds || seconds <= 0) {
       setPenaltyStatus("Enter seconds greater than 0.");
       return;
     }
+    savingPenalty.current = true;
+    setPenaltyStatus("Saving…");
     const { error } = await supabase.from("penalties").insert({
       team_id: team.id,
       station_number: next.stationNumber,
@@ -76,6 +80,7 @@ export default function TeamCard({
       judge_id: judgeId,
       notes: penaltyNote.trim().slice(0, 200) || null,
     });
+    savingPenalty.current = false;
     if (error) {
       setPenaltyStatus(friendlyDbError(error.code, "Couldn't save - check your connection."));
       return;

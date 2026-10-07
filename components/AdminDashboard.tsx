@@ -291,7 +291,10 @@ export default function AdminDashboard({
           Print QR codes
         </a>
         <button
-          onClick={async () => {
+          onClick={async (e) => {
+            const btn = e.currentTarget;
+            btn.setAttribute("aria-busy", "true");
+            btn.textContent = "Signing out...";
             await fetch("/api/admin/logout", { method: "POST" }).catch(() => null);
             window.location.href = "/admin/login";
           }}
@@ -506,7 +509,7 @@ function EventsPanel({ event, events, hasTeams }: { event: EventRow; events: Eve
       return;
     }
     setMessage("Saved. Reloading...");
-    window.setTimeout(() => window.location.reload(), 800);
+    window.location.reload();
   }
 
   // --- New event ---
@@ -554,7 +557,7 @@ function EventsPanel({ event, events, hasTeams }: { event: EventRow; events: Eve
       return;
     }
     setMessage("Locked. Reloading...");
-    window.setTimeout(() => window.location.reload(), 900);
+    window.location.reload();
   }
 
   return (
@@ -982,9 +985,14 @@ function RaceDayTab({
 
   async function removeHeat(waveNumber: number) {
     if (!window.confirm(`Remove Heat ${waveNumber}?`)) return;
+    // Gone from the list at once; back again if the server refuses.
+    const before = waveList;
+    setWaveList((prev) => prev.filter((w) => w.wave_number !== waveNumber));
     const r = await callApi("/api/admin/heats", "DELETE", { waveNumber });
-    if (r.ok) setWaveList((prev) => prev.filter((w) => w.wave_number !== waveNumber));
-    else window.alert(errorOf(r, "Couldn't remove this heat."));
+    if (!r.ok) {
+      setWaveList(before);
+      window.alert(errorOf(r, "Couldn't remove this heat."));
+    }
   }
 
   const noHeatCount = rows.filter((t) => t.wave == null && t.status !== "withdrawn").length;
@@ -1063,7 +1071,7 @@ function RaceDayTab({
                 {!started && !readOnly && (
                   <button
                     onClick={() => startHeat(w.wave_number)}
-                    disabled={busy}
+                    disabled={busy} aria-busy={busy}
                     className="tap-target mt-3 w-full rounded btn-stamped font-display disabled:opacity-50"
                   >
                     {busy ? "Starting..." : `Start Heat ${w.wave_number}`}
@@ -1086,7 +1094,7 @@ function RaceDayTab({
                       <>
                         <button
                           onClick={() => endHeat(w.wave_number)}
-                          disabled={busy}
+                          disabled={busy} aria-busy={busy}
                           className="tap-target mt-3 w-full rounded border border-fofGunmetal font-display disabled:opacity-50"
                         >
                           {busy ? "Ending..." : "End heat"}
@@ -1094,7 +1102,7 @@ function RaceDayTab({
                         {!heatHasScans(w.wave_number) && (
                           <button
                             onClick={() => undoHeat(w.wave_number, "start")}
-                            disabled={busy}
+                            disabled={busy} aria-busy={busy}
                             className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
                           >
                             Undo start (mis-click)
@@ -1120,7 +1128,7 @@ function RaceDayTab({
                     {!readOnly && (
                       <button
                         onClick={() => undoHeat(w.wave_number, "end")}
-                        disabled={busy}
+                        disabled={busy} aria-busy={busy}
                         className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
                       >
                         Reopen heat
@@ -1255,43 +1263,40 @@ function RegistrationsTab({
     load();
   }, []);
 
+  // Changes show at once; if the server says no, the row goes back as it was.
   async function patch(team: RegTeam, body: Partial<Pick<RegTeam, "wave" | "paid" | "status">>) {
+    const before = team;
     setBusyId(team.id);
     setRowError(null);
+    setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? { ...t, ...body } : t)));
     const r = await callApi(`/api/admin/teams/${encodeURIComponent(team.id)}`, "PATCH", body);
     setBusyId(null);
     if (!r.ok) {
-      setRowError(`${team.id}: ${errorOf(r, "couldn't save")}`);
+      setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? before : t)));
+      setRowError(`${team.id}: ${errorOf(r, "couldn't save")} - nothing was changed.`);
       return;
     }
-    setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? { ...t, ...body } : t)));
     onTeamChanged(team.id, body);
   }
 
   // Each athlete can pay separately; the team is paid once both have.
+  // The tick shows at once; it goes back if the save fails.
   async function payMember(team: RegTeam, position: 1 | 2 | "both", paid: boolean) {
-    setBusyId(team.id);
+    const before = team;
+    const members = team.members.map((m) =>
+      position === "both" || m.position === position ? { ...m, paid, paid_at: paid ? new Date().toISOString() : null } : m
+    );
+    const guess = members.length ? members.every((m) => m.paid) : paid;
+    setList((prev) => (prev ?? []).map((t) => (t.id !== team.id ? t : { ...t, paid: guess, members })));
     setRowError(null);
     const r = await callApi("/api/admin/registrations/payment", "PATCH", { teamId: team.id, position, paid });
-    setBusyId(null);
     if (!r.ok) {
-      setRowError(`: ${errorOf(r, "couldn't save the payment")}`);
+      setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? before : t)));
+      setRowError(`${team.id}: ${errorOf(r, "couldn't save the payment")} - the tick was undone.`);
       return;
     }
     const teamPaid = r.data?.teamPaid === true;
-    setList((prev) =>
-      (prev ?? []).map((t) =>
-        t.id !== team.id
-          ? t
-          : {
-              ...t,
-              paid: teamPaid,
-              members: t.members.map((m) =>
-                position === "both" || m.position === position ? { ...m, paid, paid_at: paid ? new Date().toISOString() : null } : m
-              ),
-            }
-      )
-    );
+    if (teamPaid !== guess) setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? { ...t, paid: teamPaid } : t)));
     onTeamChanged(team.id, { paid: teamPaid });
   }
 
@@ -1345,7 +1350,7 @@ function RegistrationsTab({
         ))}
         {!readOnly && (
           <button
-            disabled={busy}
+            disabled={busy} aria-busy={busy}
             onClick={() => payMember(t, "both", !all)}
             className="text-left text-[11px] text-fofGunmetal underline disabled:opacity-50"
           >
@@ -1591,7 +1596,7 @@ function RegistrationsTab({
                   {!readOnly && waitingToSign(t) && (
                     <button
                       onClick={() => resendLink(t)}
-                      disabled={busy}
+                      disabled={busy} aria-busy={busy}
                       className="tap-target rounded border border-fofRed px-3 text-fofRed disabled:opacity-50"
                     >
                       Resend link to {members.find((m) => m.position === 2)?.first_name ?? "partner"}
@@ -1600,7 +1605,7 @@ function RegistrationsTab({
                   {!readOnly && t.status === "registered" && !waitingToSign(t) && (
                     <button
                       onClick={() => patch(t, { status: "confirmed" })}
-                      disabled={busy}
+                      disabled={busy} aria-busy={busy}
                       className="tap-target rounded border border-fofRed px-3 text-fofRed disabled:opacity-50"
                     >
                       Confirm
@@ -1609,7 +1614,7 @@ function RegistrationsTab({
                   {!readOnly && !withdrawn && (
                     <button
                       onClick={() => withdraw(t)}
-                      disabled={busy}
+                      disabled={busy} aria-busy={busy}
                       className="tap-target rounded border border-fofGunmetal px-3 text-fofGunmetal disabled:opacity-50"
                     >
                       Withdraw
@@ -1618,7 +1623,7 @@ function RegistrationsTab({
                   {!readOnly && withdrawn && (
                     <button
                       onClick={() => reinstate(t)}
-                      disabled={busy}
+                      disabled={busy} aria-busy={busy}
                       className="tap-target rounded border border-fofGunmetal px-3 disabled:opacity-50"
                     >
                       Reinstate
@@ -1752,7 +1757,7 @@ function RegistrationsTab({
                           {waitingToSign(t) && (
                             <button
                               onClick={() => resendLink(t)}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofRed px-2 py-1 text-xs text-fofRed disabled:opacity-50"
                             >
                               Resend link
@@ -1761,7 +1766,7 @@ function RegistrationsTab({
                           {t.status === "registered" && !waitingToSign(t) && (
                             <button
                               onClick={() => patch(t, { status: "confirmed" })}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofRed px-2 py-1 text-xs text-fofRed disabled:opacity-50"
                             >
                               Confirm
@@ -1770,7 +1775,7 @@ function RegistrationsTab({
                           {!withdrawn && (
                             <button
                               onClick={() => withdraw(t)}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofGunmetal px-2 py-1 text-xs text-fofGunmetal disabled:opacity-50"
                             >
                               Withdraw
@@ -1779,7 +1784,7 @@ function RegistrationsTab({
                           {withdrawn && (
                             <button
                               onClick={() => reinstate(t)}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofGunmetal px-2 py-1 text-xs disabled:opacity-50"
                             >
                               Reinstate
@@ -1871,7 +1876,7 @@ function EmailRecordLine({
   return (
     <span className="block text-fofRed">
       {label}Failed{" "}
-      <button onClick={onResend} disabled={busy} className="ml-1 rounded border border-fofRed px-2 py-0.5 disabled:opacity-50">
+      <button onClick={onResend} disabled={busy} aria-busy={busy} className="ml-1 rounded border border-fofRed px-2 py-0.5 disabled:opacity-50">
         {busy ? "Sending..." : "Send again"}
       </button>
     </span>
@@ -1950,14 +1955,18 @@ function RegistrationAlertsBox({ readOnly }: { readOnly: boolean }) {
     });
   }, []);
 
+  // Shows the change at once; goes back if the save fails.
   async function save(next: AlertSettings, done?: string) {
+    const before = settings;
+    setSettings(next);
     setBusy(true);
     setError(null);
     setMessage(null);
     const r = await callApi("/api/admin/registrations/alerts", "PUT", next);
     setBusy(false);
     if (!r.ok) {
-      setError(errorOf(r, "Couldn't save - try again."));
+      setSettings(before);
+      setError(errorOf(r, "Couldn't save - nothing was changed."));
       return false;
     }
     setSettings(r.data?.settings as AlertSettings);
@@ -2019,7 +2028,7 @@ function RegistrationAlertsBox({ readOnly }: { readOnly: boolean }) {
                 {!readOnly && (
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy} aria-busy={busy}
                     onClick={() => save({ ...settings, emails: settings.emails.filter((x) => x !== em) }, `Removed ${em}.`)}
                     aria-label={`Remove ${em}`}
                     className="grid h-8 w-8 place-items-center text-fofGunmetal hover:text-fofRed disabled:opacity-50"
@@ -2059,7 +2068,7 @@ function RegistrationAlertsBox({ readOnly }: { readOnly: boolean }) {
                 <input
                   type="checkbox"
                   checked={settings[tg.key]}
-                  disabled={readOnly || busy}
+                  disabled={readOnly}
                   onChange={(e) => save({ ...settings, [tg.key]: e.target.checked })}
                   className="h-5 w-5"
                   style={{ accentColor: "var(--fof-red)" }}
@@ -2105,14 +2114,18 @@ function ResultsEmailsBox({
 
   const chosen = teamId || teams[0]?.id || "";
 
+  // The switch flips at once; it flips back if the save fails.
+  const [shown, setShown] = useState<Partial<Record<"email_results_auto" | "email_final_auto", boolean>>>({});
   async function toggle(key: "email_results_auto" | "email_final_auto", value: boolean) {
+    setShown((s) => ({ ...s, [key]: value }));
     setSaving(key);
     setError(null);
     setMessage(null);
     const r = await callApi(`/api/admin/events/${encodeURIComponent(event.id)}`, "PATCH", { [key]: value });
     setSaving(null);
     if (!r.ok) {
-      setError(errorOf(r, "Couldn't save - try again."));
+      setShown((s) => ({ ...s, [key]: !value }));
+      setError(errorOf(r, "Couldn't save - nothing was changed."));
       return;
     }
     onChanged();
@@ -2133,7 +2146,8 @@ function ResultsEmailsBox({
     setMessage(`Test email for ${chosen} sent to ${testEmail.trim()}.`);
   }
 
-  const settings = status?.settings ?? null;
+  const loaded = status?.settings ?? null;
+  const settings = loaded ? { ...loaded, ...shown } : null;
   const switches: { key: "email_results_auto" | "email_final_auto"; label: string; hint: string }[] = [
     {
       key: "email_results_auto",
@@ -2335,12 +2349,18 @@ function TeamsTab({
       )
     )
       return;
+    // Gone from the list at once; back again if the server refuses.
+    const rowsBefore = rows;
+    const removed: Assignment[] = [];
+    setRows((prev) => prev.filter((t) => t.id !== team.id));
+    setAssignmentList((prev) => {
+      removed.push(...prev.filter((a) => a.team_id === team.id));
+      return prev.filter((a) => a.team_id !== team.id);
+    });
     const r = await callApi(`/api/admin/teams/${encodeURIComponent(team.id)}`, "DELETE");
-    if (r.ok) {
-      setRows((prev) => prev.filter((t) => t.id !== team.id));
-      setAssignmentList((prev) => prev.filter((a) => a.team_id !== team.id));
-      return;
-    }
+    if (r.ok) return;
+    setRows(rowsBefore);
+    setAssignmentList((prev) => [...prev, ...removed]);
     if (r.data?.canWithdraw) {
       if (window.confirm(`${errorOf(r, "This team has results.")}\n\nWithdraw it now?`)) setStatus(team, "withdrawn");
       return;
@@ -2767,7 +2787,7 @@ function TeamsTab({
                         <div className="flex flex-wrap gap-2">
                           <button
                             onClick={() => saveRow(team)}
-                            disabled={busy}
+                            disabled={busy} aria-busy={busy}
                             className="rounded border border-fofRed px-2 py-1 text-fofRed disabled:opacity-50"
                           >
                             {busy ? "Saving..." : "Save"}
@@ -2775,7 +2795,7 @@ function TeamsTab({
                           {withdrawn ? (
                             <button
                               onClick={() => setStatus(team, "registered")}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofGunmetal px-2 py-1 text-fofGunmetal hover:border-fofRed hover:text-fofRed"
                             >
                               Reinstate
@@ -2783,7 +2803,7 @@ function TeamsTab({
                           ) : (
                             <button
                               onClick={() => setStatus(team, "withdrawn")}
-                              disabled={busy}
+                              disabled={busy} aria-busy={busy}
                               className="rounded border border-fofGunmetal px-2 py-1 text-fofGunmetal hover:border-fofRed hover:text-fofRed"
                             >
                               Withdraw
@@ -2996,12 +3016,13 @@ function PeopleTab({
   }
 
   async function reactivateJudge(judge: Judge) {
+    setJudgeList((prev) => prev.map((j) => (j.id === judge.id ? { ...j, active: true } : j)));
     const r = await callApi(`/api/admin/judges/${judge.id}`, "PATCH", { active: true });
     if (!r.ok) {
+      setJudgeList((prev) => prev.map((j) => (j.id === judge.id ? { ...j, active: judge.active } : j)));
       window.alert(errorOf(r, "Couldn't reactivate this judge."));
       return;
     }
-    setJudgeList((prev) => prev.map((j) => (j.id === judge.id ? { ...j, active: true } : j)));
     setJudgeMessage(`${judge.name} is active again.`);
   }
 
@@ -3030,9 +3051,13 @@ function PeopleTab({
   }
 
   async function removeAssignment(judge_id: string, team_id: string) {
+    const before = assignmentList;
+    setAssignmentList((prev) => prev.filter((a) => !(a.judge_id === judge_id && a.team_id === team_id)));
     const r = await callApi("/api/admin/assignments", "DELETE", { judge_id, team_id });
-    if (r.ok) setAssignmentList((prev) => prev.filter((a) => !(a.judge_id === judge_id && a.team_id === team_id)));
-    else window.alert(errorOf(r, "Couldn't remove the assignment."));
+    if (!r.ok) {
+      setAssignmentList(before);
+      window.alert(errorOf(r, "Couldn't remove the assignment."));
+    }
   }
 
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((t) => t !== id) : [...list, id]);
@@ -3362,12 +3387,13 @@ function CourseTab({
   async function deleteStation(number: number) {
     if (!window.confirm(`Remove station ${number}?`)) return;
     setStationError(null);
+    const before = stationRows;
+    setStationRows((prev) => prev.filter((s) => s.number !== number));
     const r = await callApi(`/api/admin/stations/${number}`, "DELETE");
     if (!r.ok) {
+      setStationRows(before);
       setStationError(errorOf(r, "Couldn't remove that station."));
-      return;
     }
-    setStationRows((prev) => prev.filter((s) => s.number !== number));
   }
 
   // --- Reorder ---

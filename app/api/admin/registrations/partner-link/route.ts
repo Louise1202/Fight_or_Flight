@@ -31,13 +31,11 @@ export async function POST(req: NextRequest) {
   if (!booker || !partner) return fail("This team has no athlete details on file.", 409);
   if (partner.signed_at) return fail(`${partner.first_name} has already signed.`, 409);
 
-  const sent = await sendPartnerInvite({
-    event,
-    teamId,
-    teamName: team.team_name ?? `Team ${teamId}`,
-    booker,
-    partner,
-  }).catch(() => false);
+  // At most 8 seconds: after that the admin gets the link to send themselves.
+  const sent = await Promise.race([
+    sendPartnerInvite({ event, teamId, teamName: team.team_name ?? `Team ${teamId}`, booker, partner }).catch(() => false),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
+  ]);
 
   return json({ ok: true, sent, link: signUrl(teamId) });
 }

@@ -23,9 +23,8 @@ export default function AdminLoginForm({ brand }: { brand: LoginBrand }) {
       body: JSON.stringify({ password }),
     });
 
-    setLoading(false);
-
     if (!res.ok) {
+      setLoading(false);
       setError(res.status === 429 ? "Too many attempts. Wait 15 minutes and try again." : "Wrong password.");
       return;
     }

@@ -309,6 +309,8 @@ export function useTeamScans({
 
   /** Removes the latest step (both scans of a one-tap finish). */
   const undo = useCallback(async (): Promise<boolean> => {
+    // Feedback at once - waiting for a send in progress can take a moment.
+    setMessage("Undoing…");
     await flushing.current;
     const queue = readQueue(teamId);
     if (queue.length > 0) {
@@ -319,6 +321,15 @@ export function useTeamScans({
       const kept = queue.filter((q) => q.group !== lastGroup);
       writeQueue(teamId, kept);
       setPendingCount(kept.length);
+      const removedIds = new Set(queue.filter((q) => q.group === lastGroup).map((q) => q.client_scan_id));
+      if (inQueue >= groupSize) {
+        // Nothing of this tap reached the server: gone from the screen now,
+        // and the list is re-read from the server in the background.
+        setScans((prev) => prev.filter((s) => !(s.id < 0 && s.client_scan_id && removedIds.has(s.client_scan_id))));
+        setMessage("Last scan undone.");
+        void refresh();
+        return true;
+      }
       // Part of this tap (the "leave" of a one-tap finish) already reached
       // the server - take that back too, so nothing is left half-done.
       if (inQueue < groupSize) {

@@ -6,7 +6,9 @@ import { passToken } from "@/lib/islandPass";
 import { teamIdFromSignToken } from "@/lib/partnerLink";
 import { sendRegisteredEmail } from "@/lib/registeredEmail";
 import { isObject, validateSigned } from "@/lib/registerMember";
-import { alertSafely } from "@/lib/adminAlerts";
+import { sendAdminAlert } from "@/lib/adminAlerts";
+import { emailConfigured } from "@/lib/resultsEmail";
+import { inBackground } from "@/lib/background";
 
 // The second athlete completes the team's registration from their email
 // link: their own details, medical answers, consents and signature. When
@@ -77,20 +79,17 @@ export async function POST(req: NextRequest) {
   const list = members ?? [];
   const teamName = team.team_name ?? `Team ${teamId}`;
 
-  // Confirmed: the "You're registered" email with the Island Pass to both.
+  // Confirmed: the "You're registered" email with the Island Pass to both,
+  // then the organisers' alert - both after the reply, so nobody waits.
   let emailed = false;
   if (status === "confirmed") {
     const event = await getEventById(team.event_id, admin);
     if (event) {
-      try {
-        emailed = await Promise.race([
-          sendRegisteredEmail({ event, teamId, teamName, division: team.division, members: list }),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
-        ]);
-      } catch {
-        emailed = false;
-      }
-      await alertSafely(admin, event, teamId, "confirmed");
+      emailed = emailConfigured();
+      inBackground(async () => {
+        await sendRegisteredEmail({ event, teamId, teamName, division: team.division, members: list }).catch(() => false);
+        await sendAdminAlert(admin, event, teamId, "confirmed");
+      });
     }
   }
 
