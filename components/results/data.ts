@@ -104,10 +104,61 @@ export function toPublicStandings(standings: Standing[]): PublicStanding[] {
   }));
 }
 
-export type PublicEvent = Pick<EventRow, "id" | "name" | "event_date" | "venue" | "theme" | "status">;
+export type PublicEvent = Pick<EventRow, "id" | "name" | "event_date" | "venue" | "theme" | "status"> & {
+  heat_minutes?: number;
+};
 
 export function toPublicEvent(e: EventRow): PublicEvent {
-  return { id: e.id, name: e.name, event_date: e.event_date, venue: e.venue, theme: e.theme, status: e.status };
+  return {
+    id: e.id,
+    name: e.name,
+    event_date: e.event_date,
+    venue: e.venue,
+    theme: e.theme,
+    status: e.status,
+    heat_minutes: e.heat_minutes,
+  };
+}
+
+/** Heats as the public may see them: number, planned time, real start/end. */
+export type PublicWave = Pick<EventWave, "wave_number" | "scheduled_start" | "actual_start" | "actual_end">;
+
+export function toPublicWaves(waves: EventWave[]): PublicWave[] {
+  return waves.map((w) => ({
+    wave_number: w.wave_number,
+    scheduled_start: w.scheduled_start,
+    actual_start: w.actual_start,
+    actual_end: w.actual_end,
+  }));
+}
+
+export type StationRecord = { stationIndex: number; name: string; ms: number; teamName: string };
+
+/**
+ * Fastest time at each real station so far (arrive -> leave), from teams
+ * that weren't withdrawn. Runs aren't stations, so they have no record.
+ */
+export function stationRecords(data: Pick<EventData, "teams" | "stations" | "scans">): StationRecord[] {
+  const active = new Map(data.teams.filter((t) => t.status !== "withdrawn").map((t) => [t.id, t.team_name]));
+  const real = data.stations.filter((s) => !s.isRun).sort((a, b) => a.number - b.number);
+  const arrive = new Map<string, number>();
+  const best = new Map<number, { ms: number; teamName: string }>();
+  for (const s of data.scans) {
+    if (!active.has(s.team_id)) continue;
+    const key = `${s.team_id}:${s.station_number}`;
+    const t = new Date(s.scanned_at).getTime();
+    if (s.event_type === "arrive") {
+      arrive.set(key, t);
+    } else if (arrive.has(key)) {
+      const ms = t - arrive.get(key)!;
+      const cur = best.get(s.station_number);
+      if (ms > 0 && (!cur || ms < cur.ms)) best.set(s.station_number, { ms, teamName: active.get(s.team_id)! });
+    }
+  }
+  return real.flatMap((st, i) => {
+    const b = best.get(st.number);
+    return b ? [{ stationIndex: i + 1, name: st.name, ms: b.ms, teamName: b.teamName }] : [];
+  });
 }
 
 /** Judge names per team id, for the given teams only (admin use). */

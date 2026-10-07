@@ -37,6 +37,8 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/register") || // public team sign-up
     path.startsWith("/api/register") || // sign-up API (validates and rate-limits itself)
     path.startsWith("/results") || // public results of finished events
+    path.startsWith("/screen") || // venue big screen (same data as the leaderboard)
+    path.startsWith("/api/time") || // server clock for phones and the big screen
     path.startsWith("/api/results") ||
     path.startsWith("/style-guide"); // public design reference page
 

@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveEvent, getEventById } from "@/lib/activeEvent";
-import { isPlausibleEventId, loadEventData, toPublicEvent, toPublicStandings } from "@/components/results/data";
+import {
+  isPlausibleEventId,
+  loadEventData,
+  stationRecords,
+  toPublicEvent,
+  toPublicStandings,
+  toPublicWaves,
+} from "@/components/results/data";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +34,14 @@ export async function GET(req: NextRequest) {
       event = await getActiveEvent(admin);
     }
 
-    const { standings } = await loadEventData(event, admin);
+    const data = await loadEventData(event, admin);
 
     return NextResponse.json(
       {
         event: toPublicEvent(event),
-        standings: toPublicStandings(standings),
+        standings: toPublicStandings(data.standings),
+        waves: toPublicWaves(data.waves),
+        records: stationRecords(data),
         generatedAt: new Date().toISOString(),
       },
       { headers: { "Cache-Control": "public, s-maxage=3, stale-while-revalidate=10" } }

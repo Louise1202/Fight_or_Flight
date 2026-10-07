@@ -278,6 +278,9 @@ export default function AdminDashboard({
         <a href="/leaderboard" target="_blank" rel="noopener noreferrer" className={BTN_SMALL}>
           Leaderboard
         </a>
+        <a href="/screen" target="_blank" rel="noopener noreferrer" className={BTN_SMALL}>
+          Big screen
+        </a>
         <a href={`/api/admin/export?eventId=${encodeURIComponent(event.id)}`} className={BTN_SMALL}>
           Export to Excel
         </a>
