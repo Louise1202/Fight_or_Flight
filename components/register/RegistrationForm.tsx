@@ -1268,6 +1268,14 @@ function Confirmation({ result, event, brand }: { result: Result; event: PublicE
           <p className="mt-3 text-[15px] text-fofPaper">
             Use your Team ID <span className="nums font-semibold text-fofRed">{result.teamId}</span> as the payment reference.
           </p>
+          <p className="mt-2 text-sm text-fofGunmetal">
+            Paying separately? Each of you can pay your own share - use{" "}
+            <span className="nums text-fofPaper">{result.teamId}</span> and your name, e.g.{" "}
+            <span className="nums text-fofPaper">
+              {result.teamId} {result.athletes[0].trim().split(/\s+/)[0]}
+            </span>
+            .
+          </p>
         </section>
       )}
 

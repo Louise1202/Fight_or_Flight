@@ -63,7 +63,7 @@ export async function sendRegisteredEmail(d: RegisteredEmailInput): Promise<bool
 <tr><td style="padding:10px 24px;font-size:14px;line-height:1.55;">
 <div style="font-size:12px;font-weight:bold;letter-spacing:1px;color:#5B6680;margin-bottom:6px;">WHAT HAPPENS NEXT</div>
 <ol style="margin:0;padding-left:18px;">
-${pay ? `<li style="margin-bottom:4px;"><b>Pay your entry fee</b>${d.event.entry_fee ? ` (${escapeHtml(d.event.entry_fee)})` : ""} - use <b>${escapeHtml(d.teamId)}</b> as your reference.</li>` : ""}
+${pay ? `<li style="margin-bottom:4px;"><b>Pay your entry fee</b>${d.event.entry_fee ? ` (${escapeHtml(d.event.entry_fee)})` : ""} - use <b>${escapeHtml(d.teamId)}</b> as your reference. Paying separately? Use <b>${escapeHtml(d.teamId)}</b> and your name, e.g. ${escapeHtml(`${d.teamId} ${firstNames[0] ?? ""}`.trim())}.</li>` : ""}
 <li style="margin-bottom:4px;"><b>Your heat</b> - we'll email you your heat and start time.</li>
 <li style="margin-bottom:4px;"><b>Race day</b> - ${escapeHtml(where || date)}. Show your Island Pass.</li>
 </ol>
@@ -91,7 +91,7 @@ ${
     `Congratulations! ${d.teamName} is registered for ${d.event.name}.`,
     `We're so excited to see you at ${d.event.venue ?? "the event"} on ${date}${d.event.registration_time ? ` - check-in from ${d.event.registration_time}` : ""}.`,
     "",
-    `Your Team ID: ${d.teamId} (use it as your payment reference)`,
+    `Your Team ID: ${d.teamId} (use it as your payment reference; paying separately? add your name, e.g. ${d.teamId} ${firstNames[0] ?? ""})`,
     d.event.entry_fee ? `Entry fee: ${d.event.entry_fee}` : "",
     d.event.bank_details ? `${d.event.bank_details}\nReference: ${d.teamId}` : "",
     "",

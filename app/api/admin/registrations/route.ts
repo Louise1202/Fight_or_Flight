@@ -32,6 +32,8 @@ type MemberRow = {
   emergency_name: string;
   emergency_phone: string;
   emergency_relationship: string | null;
+  paid: boolean;
+  paid_at: string | null;
 };
 
 export type AdminRegistrationsResponse = {
@@ -70,7 +72,7 @@ export async function GET() {
         admin
           .from("team_members")
           .select(
-            "id, team_id, position, first_name, surname, gender, phone, email, emergency_name, emergency_phone, emergency_relationship"
+            "id, team_id, position, first_name, surname, gender, phone, email, emergency_name, emergency_phone, emergency_relationship, paid, paid_at"
           )
           .in("team_id", ids)
           .order("id", { ascending: true })
@@ -140,6 +142,8 @@ export async function GET() {
             emergency_name: m.emergency_name,
             emergency_phone: m.emergency_phone,
             emergency_relationship: m.emergency_relationship,
+            paid: m.paid === true,
+            paid_at: m.paid_at,
           })),
           medicalFlags: ms.reduce((sum, m) => sum + (flagsByMember.get(m.id) ?? 0), 0),
           signed: ms.filter((m) => signedMemberIds.has(m.id)).length,

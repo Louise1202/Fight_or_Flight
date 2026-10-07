@@ -1175,6 +1175,8 @@ type RegMember = {
   emergency_name: string;
   emergency_phone: string;
   emergency_relationship: string | null;
+  paid?: boolean;
+  paid_at?: string | null;
 };
 
 type RegTeam = {
@@ -1216,6 +1218,7 @@ function RegistrationsTab({
   const [rowError, setRowError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [unpaidOnly, setUnpaidOnly] = useState(false);
 
   const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null);
   const [emailRowError, setEmailRowError] = useState<string | null>(null);
@@ -1265,6 +1268,94 @@ function RegistrationsTab({
     onTeamChanged(team.id, body);
   }
 
+  // Each athlete can pay separately; the team is paid once both have.
+  async function payMember(team: RegTeam, position: 1 | 2 | "both", paid: boolean) {
+    setBusyId(team.id);
+    setRowError(null);
+    const r = await callApi("/api/admin/registrations/payment", "PATCH", { teamId: team.id, position, paid });
+    setBusyId(null);
+    if (!r.ok) {
+      setRowError(`: ${errorOf(r, "couldn't save the payment")}`);
+      return;
+    }
+    const teamPaid = r.data?.teamPaid === true;
+    setList((prev) =>
+      (prev ?? []).map((t) =>
+        t.id !== team.id
+          ? t
+          : {
+              ...t,
+              paid: teamPaid,
+              members: t.members.map((m) =>
+                position === "both" || m.position === position ? { ...m, paid, paid_at: paid ? new Date().toISOString() : null } : m
+              ),
+            }
+      )
+    );
+    onTeamChanged(team.id, { paid: teamPaid });
+  }
+
+  function teamFullyPaid(t: RegTeam): boolean {
+    return t.members.length > 0 ? t.members.every((m) => m.paid) : t.paid;
+  }
+
+  function PaymentControls({ t, busy }: { t: RegTeam; busy: boolean }) {
+    const members = [...t.members].sort((a, b) => a.position - b.position);
+    if (members.length === 0) {
+      return (
+        <button
+          role="switch"
+          aria-checked={t.paid}
+          aria-label={`Paid - ${t.id}`}
+          disabled={readOnly || busy}
+          onClick={() => payMember(t, "both", !t.paid)}
+          className={`tap-target rounded border px-3 text-xs disabled:opacity-50 ${t.paid ? "border-fofRed text-fofRed" : "border-fofGunmetal text-fofGunmetal"}`}
+        >
+          {t.paid ? "✓ Paid" : "Not paid"}
+        </button>
+      );
+    }
+    const all = members.every((m) => m.paid);
+    return (
+      <div className="flex flex-col gap-1">
+        {members.map((m) => (
+          <button
+            key={m.position}
+            role="switch"
+            aria-checked={!!m.paid}
+            aria-label={`Paid - ${m.first_name} ${m.surname}, ${t.id}`}
+            disabled={readOnly || busy}
+            onClick={() => payMember(t, m.position as 1 | 2, !m.paid)}
+            title={m.paid && m.paid_at ? `Ticked ${sast(m.paid_at, SAST_DATE_TIME)}` : undefined}
+            className={`flex min-h-[40px] items-center gap-2 rounded border px-2 text-left text-xs disabled:opacity-50 ${
+              m.paid ? "border-fofRed text-fofPaper" : "border-fofGunmetal text-fofGunmetal"
+            }`}
+          >
+            <span
+              aria-hidden="true"
+              className={`grid h-4 w-4 shrink-0 place-items-center rounded-sm border text-[11px] leading-none ${
+                m.paid ? "border-fofRed bg-fofRed text-white" : "border-fofGunmetal"
+              }`}
+            >
+              {m.paid ? "✓" : ""}
+            </span>
+            <span className="truncate">{m.first_name}</span>
+            <span className="ml-auto whitespace-nowrap">{m.paid ? "Paid" : "Not paid"}</span>
+          </button>
+        ))}
+        {!readOnly && (
+          <button
+            disabled={busy}
+            onClick={() => payMember(t, "both", !all)}
+            className="text-left text-[11px] text-fofGunmetal underline disabled:opacity-50"
+          >
+            {all ? "Untick both" : "Both paid together"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   function withdraw(team: RegTeam) {
     if (
       !window.confirm(
@@ -1285,11 +1376,18 @@ function RegistrationsTab({
     { label: "Without a heat", value: live.filter((t) => t.wave == null).length, alert: true },
     { label: "With medical notes", value: live.filter((t) => countOf(t.medicalFlags) > 0).length, alert: true },
     { label: "Withdrawn", value: teams.length - live.length },
-    { label: "Paid", value: live.filter((t) => t.paid).length },
+    (() => {
+      const n = live.filter((t) => teamFullyPaid(t)).length;
+      return { label: n === 1 ? "team paid in full" : "teams paid in full", value: n };
+    })(),
+    {
+      label: `of ${live.reduce((n, t) => n + Math.max(1, t.members.length), 0)} athletes paid`,
+      value: live.reduce((n, t) => n + (t.members.length ? t.members.filter((m) => m.paid).length : t.paid ? 1 : 0), 0),
+    },
   ];
 
   const q = search.trim().toLowerCase();
-  const shown = q
+  const searched = q
     ? teams.filter(
         (t) =>
           t.id.toLowerCase().includes(q) ||
@@ -1297,6 +1395,7 @@ function RegistrationsTab({
           t.members.some((m) => `${m.first_name} ${m.surname}`.toLowerCase().includes(q))
       )
     : teams;
+  const shown = unpaidOnly ? searched.filter((t) => t.status !== "withdrawn" && !teamFullyPaid(t)) : searched;
 
   return (
     <section className="mb-10 min-w-0">
@@ -1327,8 +1426,15 @@ function RegistrationsTab({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search Team ID, team or athlete"
-          className="tap-target min-w-0 flex-1 rounded border border-fofGunmetal bg-transparent px-3 sm:max-w-sm"
+          className="tap-target w-full min-w-0 rounded border border-fofGunmetal bg-transparent px-3 sm:w-auto sm:max-w-sm sm:flex-1"
         />
+        <button
+          onClick={() => setUnpaidOnly((v) => !v)}
+          aria-pressed={unpaidOnly}
+          className={`${BTN_SMALL} ${unpaidOnly ? "border-fofRed text-fofRed" : ""}`}
+        >
+          {unpaidOnly ? "Showing: not paid" : "Show only not paid"}
+        </button>
         <button onClick={load} disabled={loading} className={BTN_SMALL}>
           {loading ? "Loading..." : "Refresh"}
         </button>
@@ -1352,8 +1458,136 @@ function RegistrationsTab({
       {list === null && !loadError && <p className="text-sm text-fofGunmetal">Loading...</p>}
       {list !== null && teams.length === 0 && <p className="text-sm text-fofGunmetal">No teams have signed up yet.</p>}
 
+      {/* Phones: one card per team (the wide table needs a laptop). */}
       {teams.length > 0 && (
-        <div className="overflow-x-auto rounded border border-fofCharcoal">
+        <ul className="space-y-3 md:hidden">
+          {shown.map((t) => {
+            const withdrawn = t.status === "withdrawn";
+            const busy = busyId === t.id;
+            const med = countOf(t.medicalFlags);
+            const signed = countOf(t.signed);
+            const members = [...t.members].sort((a, b) => a.position - b.position);
+            return (
+              <li
+                key={t.id}
+                className={`rounded-lg border border-fofCharcoal bg-fofPanel p-3 ${withdrawn ? "opacity-60" : ""}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-display text-lg leading-tight">{t.team_name}</p>
+                    <p className="text-xs text-fofGunmetal">
+                      <span className="font-mono">{t.id}</span> · {t.division ?? "—"} ·{" "}
+                      <span className="capitalize">{t.status}</span>
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
+                    {med > 0 && (
+                      <span className="rounded border border-fofRed px-2 py-0.5 text-fofRed">
+                        {med} medical note{med === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    <span className="text-fofGunmetal">
+                      Signed {signed}/{members.length || 2}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-1 text-sm">
+                  {members.map((m) => (
+                    <div key={m.position}>
+                      <span>
+                        {m.first_name} {m.surname}
+                      </span>
+                      <span className="block text-xs text-fofGunmetal">
+                        <a href={`tel:${m.phone}`} className="underline">
+                          {m.phone}
+                        </a>{" "}
+                        ·{" "}
+                        <a href={`mailto:${m.email}`} className="break-all underline">
+                          {m.email}
+                        </a>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="mb-1 text-[11px] uppercase tracking-wide text-fofGunmetal">Paid</p>
+                    <PaymentControls t={t} busy={busy} />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] uppercase tracking-wide text-fofGunmetal">Heat</p>
+                    <select
+                      value={t.wave ?? ""}
+                      disabled={readOnly || withdrawn || busy}
+                      onChange={(e) => patch(t, { wave: e.target.value === "" ? null : Number(e.target.value) })}
+                      aria-label={`Assign heat for ${t.id}`}
+                      className="tap-target w-full rounded border border-fofGunmetal bg-transparent px-2 disabled:opacity-50"
+                    >
+                      <option value="" className="bg-fofBlack">
+                        {t.wave == null ? "Assign heat" : "No heat"}
+                      </option>
+                      {sortedWaves.map((w) => (
+                        <option key={w.wave_number} value={w.wave_number} className="bg-fofBlack">
+                          Heat {w.wave_number} · {wallClock(w.scheduled_start)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  {!readOnly && t.status === "registered" && (
+                    <button
+                      onClick={() => patch(t, { status: "confirmed" })}
+                      disabled={busy}
+                      className="tap-target rounded border border-fofRed px-3 text-fofRed disabled:opacity-50"
+                    >
+                      Confirm
+                    </button>
+                  )}
+                  {!readOnly && !withdrawn && (
+                    <button
+                      onClick={() => withdraw(t)}
+                      disabled={busy}
+                      className="tap-target rounded border border-fofGunmetal px-3 text-fofGunmetal disabled:opacity-50"
+                    >
+                      Withdraw
+                    </button>
+                  )}
+                  {!readOnly && withdrawn && (
+                    <button
+                      onClick={() => patch(t, { status: "registered" })}
+                      disabled={busy}
+                      className="tap-target rounded border border-fofGunmetal px-3 disabled:opacity-50"
+                    >
+                      Reinstate
+                    </button>
+                  )}
+                  <a
+                    href={`/admin/registrations/${encodeURIComponent(t.id)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto underline"
+                  >
+                    Signed form
+                  </a>
+                </div>
+                <div className="mt-2 text-xs">
+                  <ResultsEmailCell team={t} status={emailStatus} busyKey={resendingKey} onResend={resend} />
+                </div>
+              </li>
+            );
+          })}
+          {shown.length === 0 && (
+            <li className="text-sm text-fofGunmetal">{unpaidOnly ? "Everyone has paid." : `Nothing matches "${search}".`}</li>
+          )}
+        </ul>
+      )}
+
+      {teams.length > 0 && (
+        <div className="hidden overflow-x-auto rounded border border-fofCharcoal md:block">
           <table className="w-full min-w-[1240px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
@@ -1449,19 +1683,8 @@ function RegistrationsTab({
                     <td className="p-2">
                       {signed > 0 ? `✓ ${signed}${members.length ? `/${members.length}` : ""}` : "—"}
                     </td>
-                    <td className="p-2">
-                      <button
-                        role="switch"
-                        aria-checked={t.paid}
-                        aria-label={`Paid - ${t.id}`}
-                        disabled={readOnly || busy}
-                        onClick={() => patch(t, { paid: !t.paid })}
-                        className={`rounded border px-3 py-1 text-xs disabled:opacity-50 ${
-                          t.paid ? "border-fofRed text-fofRed" : "border-fofGunmetal text-fofGunmetal"
-                        }`}
-                      >
-                        {t.paid ? "✓ Paid" : "Not paid"}
-                      </button>
+                    <td className="p-2 min-w-[150px]">
+                      <PaymentControls t={t} busy={busy} />
                     </td>
                     <td className="p-2">
                       <span className="block text-xs capitalize text-fofGunmetal">{t.status}</span>
