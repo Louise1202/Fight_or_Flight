@@ -2,14 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { buildSplits, buildLegs, formatDuration, getNextAction, Scan } from "@/lib/timing";
+import { buildSplits, buildLegs, formatDuration, getNextAction, sortScans, Scan } from "@/lib/timing";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
-import { StationDef } from "@/lib/stations";
+import { StationDef, finishNumber, realStationIndex } from "@/lib/stations";
 import { CONGRATS_MESSAGES } from "@/lib/congratsMessages";
+import { useHeat } from "@/lib/useHeat";
+import { useSharedTheme } from "@/lib/useSharedTheme";
+import { EventTheme } from "@/lib/events";
 import LogoutButton from "./LogoutButton";
 
 type Team = {
   id: string;
+  event_id: string;
   team_name: string;
   athlete_1: string | null;
   athlete_2: string | null;
@@ -22,92 +26,76 @@ type ScanRow = Scan & { id: number };
 
 export default function TeamResults({
   team,
+  event,
+  initialTheme,
   initialScans,
   penalties,
   initialWave,
   stations,
 }: {
   team: Team;
+  event: {
+    name: string;
+    theme: EventTheme;
+    dateLabel: string;
+    venue: string | null;
+    registrationTime: string | null;
+    logo: string;
+    logoRound: boolean;
+  };
+  initialTheme: "dark" | "light";
   initialScans: ScanRow[];
   penalties: { station_number: number; penalty_seconds: number; notes: string | null }[];
   initialWave: Wave | null;
   stations: StationDef[];
 }) {
+  const theme = useSharedTheme(initialTheme);
   const supabase = useMemo(() => createClient(), []);
+  const wave = useHeat(team.event_id, team.wave, initialWave);
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
-  const [wave, setWave] = useState<Wave | null>(initialWave);
   const [stoppedNote, setStoppedNote] = useState<string | null>(team.stopped_note);
   const [now, setNow] = useState(Date.now());
-  // Picked once on load (not on every re-render/tick) so it doesn't
-  // change while the team is looking at their own results.
-  const [congratsLine] = useState(
-    () => CONGRATS_MESSAGES[Math.floor(Math.random() * CONGRATS_MESSAGES.length)]
-  );
+  // Picked once on load so it doesn't change while they're looking.
+  // Lines that name Fight or Flight are only used for that event.
+  const [congratsLine] = useState(() => {
+    const pool =
+      event.theme === "fof" ? CONGRATS_MESSAGES : CONGRATS_MESSAGES.filter((m) => !/fight or flight/i.test(m));
+    return pool[Math.floor(Math.random() * pool.length)];
+  });
 
+  // Live scans and stopped note (Realtime), with a slow poll as a safety
+  // net in case Realtime is unavailable.
   useEffect(() => {
+    const load = () =>
+      supabase
+        .from("scans")
+        .select("id, station_number, event_type, scanned_at")
+        .eq("team_id", team.id)
+        .order("scanned_at", { ascending: true })
+        .then(({ data }) => data && setScans(data));
+    const loadNote = () =>
+      supabase
+        .from("teams")
+        .select("stopped_note")
+        .eq("id", team.id)
+        .maybeSingle()
+        .then(({ data }) => data && setStoppedNote(data.stopped_note));
+
     const channel = supabase
-      .channel(`scans-${team.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "scans", filter: `team_id=eq.${team.id}` },
-        () => {
-          supabase
-            .from("scans")
-            .select("id, station_number, event_type, scanned_at")
-            .eq("team_id", team.id)
-            .order("scanned_at", { ascending: true })
-            .then(({ data }) => data && setScans(data));
-        }
+      .channel(`team-results-${team.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "scans", filter: `team_id=eq.${team.id}` }, () => {
+        load();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${team.id}` }, (payload) =>
+        setStoppedNote((payload.new as { stopped_note: string | null }).stopped_note)
       )
       .subscribe();
-
+    const poll = setInterval(() => {
+      load();
+      loadNote();
+    }, 15000);
     return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [supabase, team.id]);
-
-  useEffect(() => {
-    if (team.wave == null) return;
-    const channel = supabase
-      .channel(`wave-${team.wave}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "waves", filter: `wave_number=eq.${team.wave}` },
-        (payload) => setWave(payload.new as Wave)
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [supabase, team.wave]);
-
-  // Safety net alongside Realtime above, in case Realtime isn't enabled
-  // for the waves table - the team's own clock still starts within a
-  // few seconds on its own either way, with no refresh needed. Keeps
-  // running through the whole heat so it ending is caught the same way.
-  useEffect(() => {
-    if (team.wave == null || hasWaveEnded(wave)) return;
-    const poll = setInterval(async () => {
-      const { data } = await supabase
-        .from("waves")
-        .select("wave_number, scheduled_start, actual_start, actual_end")
-        .eq("wave_number", team.wave)
-        .maybeSingle();
-      if (data) setWave(data as Wave);
-    }, 3000);
-    return () => clearInterval(poll);
-  }, [supabase, team.wave, wave]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel(`team-${team.id}`)
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${team.id}` },
-        (payload) => setStoppedNote((payload.new as { stopped_note: string | null }).stopped_note)
-      )
-      .subscribe();
-    return () => {
+      clearInterval(poll);
       supabase.removeChannel(channel);
     };
   }, [supabase, team.id]);
@@ -119,19 +107,16 @@ export default function TeamResults({
 
   const started = hasWaveStarted(wave);
   const startTime = effectiveStartTime(team.start_time, wave);
-  const splits = buildSplits(scans, startTime, stations);
   const legs = buildLegs(scans, startTime, stations);
   const next = getNextAction(scans, stations);
   const totalPenaltySeconds = penalties.reduce((sum, p) => sum + p.penalty_seconds, 0);
 
-  const finishScan = scans.find((s) => s.station_number === stations.length + 1);
-  const rawMs = finishScan
-    ? new Date(finishScan.scanned_at).getTime() - new Date(startTime).getTime()
-    : null;
+  const finishNo = finishNumber(stations);
+  const finishScan = sortScans(scans).find((s) => s.station_number === finishNo && s.event_type === "arrive");
+  const rawMs = finishScan ? new Date(finishScan.scanned_at).getTime() - new Date(startTime).getTime() : null;
   const finalMs = rawMs != null ? rawMs + totalPenaltySeconds * 1000 : null;
 
-  // The heat ended before this team ever reached the finish line - frozen
-  // exactly where they were, not still ticking against the live clock.
+  // The heat ended before this team reached the finish - frozen where they were.
   const stopped = finalMs == null && hasWaveEnded(wave);
   const frozenAt = stopped && wave?.actual_end ? new Date(wave.actual_end).getTime() : null;
   const liveElapsedMs = !started
@@ -140,8 +125,11 @@ export default function TeamResults({
     ? frozenAt - new Date(startTime).getTime()
     : now - new Date(startTime).getTime();
 
+  const penaltyStation = (n: number) =>
+    n === finishNo ? "Finish" : `Station ${realStationIndex(stations, n)}`;
+
   return (
-    <main className="mx-auto max-w-md px-4 py-6">
+    <main data-theme={theme} data-brand={event.theme} className="ground mx-auto min-h-screen max-w-md bg-fofBlack px-4 py-6 text-fofPaper">
       {(finalMs != null || stopped) && (
         <div className="relative mx-auto mb-2 mt-10" style={{ width: 260 }}>
           <svg
@@ -158,35 +146,46 @@ export default function TeamResults({
             </text>
           </svg>
           <img
-            src="/logo.png"
-            alt="Fight or Flight"
-            className="relative z-0 mx-auto h-[200px] w-[200px] rounded-full"
+            src={event.logo}
+            alt={event.name}
+            className={`relative z-0 mx-auto h-[200px] w-[200px] ${event.logoRound ? "logo-round" : "rounded-full"}`}
           />
         </div>
       )}
 
-      <header className="mb-4 flex items-start justify-between">
+      <header className="mb-4 flex items-start justify-between gap-3">
         <div>
+          <p className="text-xs text-fofGunmetal">
+            {event.name}
+            {event.dateLabel ? ` · ${event.dateLabel}` : ""}
+          </p>
           <h1 className="font-display text-2xl">{team.team_name}</h1>
           <p className="text-sm text-fofGunmetal">
             {team.athlete_1}
             {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
+            <span className="nums"> · {team.id}</span>
           </p>
         </div>
         <LogoutButton />
       </header>
 
       {(finalMs != null || stopped) && (
-        <p className="mb-4 text-center font-display text-lg text-fofPaper">
-          {congratsLine}
-        </p>
+        <p className="mb-4 text-center font-display text-lg text-fofPaper">{congratsLine}</p>
       )}
 
-      {!started ? (
+      {team.wave == null ? (
         <section className="rounded-lg border-2 border-fofGunmetal p-6 text-center">
-          <p className="text-sm text-fofGunmetal">
-            {wave ? `Heat ${wave.wave_number}` : "Your heat"} hasn't started yet
+          <p className="font-display text-xl">You&apos;re registered</p>
+          <p className="mt-2 text-sm text-fofGunmetal">
+            Your heat will show here once the organisers have set the heats.
+            {event.registrationTime && event.venue
+              ? ` Be there at ${event.registrationTime} at ${event.venue}.`
+              : ""}
           </p>
+        </section>
+      ) : !started ? (
+        <section className="rounded-lg border-2 border-fofGunmetal p-6 text-center">
+          <p className="text-sm text-fofGunmetal">Heat {team.wave} hasn&apos;t started yet</p>
           <p className="mt-2 font-display text-xl">Get ready!</p>
         </section>
       ) : (
@@ -194,57 +193,39 @@ export default function TeamResults({
           {finalMs != null ? (
             <>
               <p className="text-sm text-fofGunmetal">Final time</p>
-              <p className="font-display text-3xl text-fofRed">
-                {formatDuration(finalMs)}
-              </p>
+              <p suppressHydrationWarning className="nums font-display text-3xl text-fofRed">{formatDuration(finalMs)}</p>
             </>
           ) : stopped ? (
             <>
               <p className="text-sm text-fofGunmetal">Heat ended</p>
-              <p className="font-display text-3xl text-fofRed">
-                {formatDuration(liveElapsedMs ?? 0)}
-              </p>
-              {stoppedNote && (
-                <p className="mt-2 text-sm text-fofPaper">{stoppedNote}</p>
-              )}
+              <p suppressHydrationWarning className="nums font-display text-3xl text-fofRed">{formatDuration(liveElapsedMs ?? 0)}</p>
+              {stoppedNote && <p className="mt-2 text-sm text-fofPaper">{stoppedNote}</p>}
             </>
           ) : (
             <>
               <p className="text-sm text-fofGunmetal">Race clock</p>
-              <p className="font-display text-3xl text-fofRed">
-                {formatDuration(liveElapsedMs ?? 0)}
-              </p>
+              <p suppressHydrationWarning className="nums font-display text-3xl text-fofRed">{formatDuration(liveElapsedMs ?? 0)}</p>
               <p className="mt-1 text-sm text-fofGunmetal">
-                {next.runName
-                  ? `Running - ${next.runName}`
-                  : `Station ${next.displayNumber}: ${next.stationName}`}
+                {next.runName ? `Running - ${next.runName}` : `Station ${next.displayNumber}: ${next.stationName}`}
               </p>
             </>
           )}
           {totalPenaltySeconds > 0 && (
-            <p className="mt-1 text-sm text-fofGunmetal">
-              includes +{totalPenaltySeconds}s penalty
-            </p>
+            <p className="mt-1 text-sm text-fofGunmetal">includes +{totalPenaltySeconds}s penalty</p>
           )}
         </section>
       )}
 
       <section className="mt-6">
-        <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
-          SPLITS
-        </h2>
+        <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">SPLITS</h2>
         <ul className="space-y-1 text-sm">
           {legs.map((leg, i) => (
             <li
               key={i}
-              className="flex justify-between border-b border-fofCharcoal py-1"
+              className={`flex justify-between border-b border-fofCharcoal py-1 ${leg.kind === "run" ? "text-fofGunmetal" : ""}`}
             >
-              <span>
-                {i + 1}. {leg.label}
-              </span>
-              <span className="text-fofGunmetal">
-                {leg.ms != null ? formatDuration(leg.ms) : ""}
-              </span>
+              <span>{leg.kind === "station" ? `${leg.stationIndex}. ${leg.label}` : leg.label}</span>
+              <span className="nums text-fofGunmetal">{leg.ms != null ? formatDuration(leg.ms) : ""}</span>
             </li>
           ))}
         </ul>
@@ -252,17 +233,15 @@ export default function TeamResults({
 
       {penalties.length > 0 && (
         <section className="mt-6">
-          <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">
-            PENALTIES
-          </h2>
+          <h2 className="mb-2 font-display text-sm tracking-wide text-fofGunmetal">PENALTIES</h2>
           <ul className="space-y-1 text-sm">
             {penalties.map((p, i) => (
               <li key={i} className="flex justify-between">
                 <span>
-                  Station {p.station_number}
+                  {penaltyStation(p.station_number)}
                   {p.notes ? ` - ${p.notes}` : ""}
                 </span>
-                <span className="text-fofRed">+{p.penalty_seconds}s</span>
+                <span className="nums text-fofRed">+{p.penalty_seconds}s</span>
               </li>
             ))}
           </ul>

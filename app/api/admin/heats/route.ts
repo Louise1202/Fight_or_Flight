@@ -1,120 +1,92 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAdminSession } from "@/lib/adminAuth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
+import { adminContext, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
-// Always dynamic - this hits the live database on every request and
-// must never be statically pre-rendered at build time (a build-time DB
-// call against real, ever-changing data is exactly what crashed the
-// build once already).
+// Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
-// Add / remove heats (waves) directly in /admin, so an event can be built
-// without an Excel import.
-//
-// Race-day control of a heat (start / end / undo / edit scheduled time)
-// stays in /api/admin/waves - this route is only about the heat existing
-// at all.
+// Add / remove heats of the ACTIVE event. Race-day control of a heat
+// (start / end / undo / edit time) is in /api/admin/waves.
 
-// Add a heat.
+function validTime(t: unknown): t is string {
+  if (typeof t !== "string" || !/^\d{2}:\d{2}$/.test(t)) return false;
+  const [h, m] = t.split(":").map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+
+// Add a heat. Numbered within the event (lowest free number); the date
+// always comes from the event itself.
 export async function POST(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
 
-  const { time, date } = await req.json();
-  if (!/^\d{2}:\d{2}$/.test(time ?? "")) {
-    return NextResponse.json(
-      { error: "A time in HH:MM format is required" },
-      { status: 400 }
-    );
-  }
-  if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return NextResponse.json(
-      { error: "Date must be YYYY-MM-DD" },
-      { status: 400 }
-    );
-  }
-
-  const admin = createAdminClient();
+  const body = await readBody(req);
+  const time = body?.time;
+  if (!validTime(time)) return fail("Enter a start time first.");
 
   const { data: existing, error: fetchErr } = await admin
     .from("waves")
-    .select("wave_number, scheduled_start")
-    .order("wave_number");
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+    .select("wave_number")
+    .eq("event_id", event.id);
+  if (fetchErr) return dbFail(fetchErr, "Couldn't load the heats.");
 
-  // Event date: use what was passed, otherwise borrow it from an existing
-  // heat so every heat sits on the same day.
-  const eventDate =
-    date ??
-    (existing && existing.length > 0
-      ? String(existing[0].scheduled_start).slice(0, 10)
-      : null);
-  if (!eventDate) {
-    return NextResponse.json(
-      { error: "No heats exist yet - an event date is required" },
-      { status: 400 }
-    );
-  }
-
-  // Lowest positive integer not already in use, so removing a heat from
-  // the middle and adding one back reuses that number.
   const used = new Set((existing ?? []).map((w) => w.wave_number));
   let waveNumber = 1;
   while (used.has(waveNumber)) waveNumber += 1;
 
+  // Wall-clock convention: no timezone, read back with getUTC* (lib/teamId.ts).
   const row = {
+    event_id: event.id,
     wave_number: waveNumber,
-    scheduled_start: `${eventDate}T${time}:00`,
+    scheduled_start: `${event.event_date}T${time}:00`,
   };
 
   const { error } = await admin.from("waves").insert(row);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return dbFail(error, "Couldn't add the heat.");
 
-  return NextResponse.json({ ok: true, wave: { ...row, actual_start: null, actual_end: null } });
+  return json({
+    ok: true,
+    wave: { wave_number: waveNumber, scheduled_start: row.scheduled_start, actual_start: null, actual_end: null, end_reason: null },
+  });
 }
 
-// Remove a heat. Only allowed while it's empty and hasn't been started.
+// Remove a heat. Only while it's empty and hasn't been started.
 export async function DELETE(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
 
-  const { waveNumber } = await req.json();
-  if (!Number.isInteger(waveNumber)) {
-    return NextResponse.json({ error: "waveNumber is required" }, { status: 400 });
-  }
-
-  const admin = createAdminClient();
+  const body = await readBody(req);
+  const waveNumber = body?.waveNumber;
+  if (!Number.isInteger(waveNumber)) return fail("Choose a heat.");
 
   const { data: heat, error: heatErr } = await admin
     .from("waves")
     .select("wave_number, actual_start")
-    .eq("wave_number", waveNumber)
+    .eq("event_id", event.id)
+    .eq("wave_number", waveNumber as number)
     .maybeSingle();
-  if (heatErr) return NextResponse.json({ error: heatErr.message }, { status: 500 });
-  if (!heat) return NextResponse.json({ error: "Heat not found" }, { status: 404 });
-
-  if (heat.actual_start) {
-    return NextResponse.json(
-      { error: "This heat has already been started - reopen/undo its start first." },
-      { status: 409 }
-    );
-  }
+  if (heatErr) return dbFail(heatErr, "Couldn't load that heat.");
+  if (!heat) return fail("That heat doesn't exist.", 404);
+  if (heat.actual_start) return fail("This heat has already been started - undo its start first.", 409);
 
   const { count } = await admin
     .from("teams")
     .select("id", { count: "exact", head: true })
-    .eq("wave", waveNumber);
+    .eq("event_id", event.id)
+    .eq("wave", waveNumber as number);
   if (count && count > 0) {
-    return NextResponse.json(
-      { error: `Heat ${waveNumber} still has ${count} team(s) - move or delete them first.` },
-      { status: 409 }
-    );
+    return fail(`Heat ${waveNumber} still has ${count} team(s) - move them to another heat first.`, 409);
   }
 
-  const { error } = await admin.from("waves").delete().eq("wave_number", waveNumber);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const { error } = await admin
+    .from("waves")
+    .delete()
+    .eq("event_id", event.id)
+    .eq("wave_number", waveNumber as number);
+  if (error) return dbFail(error, "Couldn't remove the heat.");
 
-  return NextResponse.json({ ok: true });
+  return json({ ok: true });
 }

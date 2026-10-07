@@ -1,44 +1,50 @@
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { computeStandings, TeamRow } from "@/lib/leaderboard";
-import { Scan } from "@/lib/timing";
-import { Wave } from "@/lib/waves";
+import { getActiveEvent, getEventById } from "@/lib/activeEvent";
+import { EventRow } from "@/lib/events";
 import LeaderboardBoard from "@/components/LeaderboardBoard";
+import { isPlausibleEventId, loadEventData, toPublicEvent, toPublicStandings } from "@/components/results/data";
 
 export const dynamic = "force-dynamic";
 
-export default async function LeaderboardPage() {
+type Props = { searchParams: { eventId?: string | string[]; division?: string | string[] } };
+
+function one(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+async function resolveEvent(eventId: string | undefined): Promise<EventRow | null> {
   const admin = createAdminClient();
+  if (eventId == null) return getActiveEvent(admin);
+  if (!isPlausibleEventId(eventId)) return null;
+  return getEventById(eventId, admin);
+}
 
-  const [{ data: teams }, { data: scans }, { data: penalties }, { data: waves }, { data: stations }] = await Promise.all([
-    admin.from("teams").select("id, team_name, division, wave, start_time"),
-    admin.from("scans").select("team_id, station_number, event_type, scanned_at"),
-    admin.from("penalties").select("team_id, penalty_seconds"),
-    admin.from("waves").select("wave_number, scheduled_start, actual_start, actual_end"),
-    admin.from("stations").select("number, name, is_run").order("number"),
-  ]);
-
-  const scansByTeam: Record<string, Scan[]> = {};
-  for (const scan of scans ?? []) {
-    (scansByTeam[(scan as any).team_id] ??= []).push(scan as any);
+export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
+  try {
+    const event = await resolveEvent(one(searchParams.eventId));
+    return { title: event ? `${event.name} - Live leaderboard` : "Live leaderboard" };
+  } catch {
+    return { title: "Live leaderboard" };
   }
+}
 
-  const penaltySecondsByTeam: Record<string, number> = {};
-  for (const p of penalties ?? []) {
-    penaltySecondsByTeam[p.team_id] = (penaltySecondsByTeam[p.team_id] ?? 0) + p.penalty_seconds;
-  }
+// Public spectator screen (projector + phones). Server-renders the first
+// view, then LeaderboardBoard polls /api/leaderboard every 5 seconds.
+export default async function LeaderboardPage({ searchParams }: Props) {
+  const event = await resolveEvent(one(searchParams.eventId));
+  if (!event) notFound();
 
-  const wavesByNumber: Record<number, Wave> = {};
-  for (const w of waves ?? []) {
-    wavesByNumber[w.wave_number] = w as Wave;
-  }
+  const admin = createAdminClient();
+  const { standings } = await loadEventData(event, admin);
 
-  const initialStandings = computeStandings(
-    (teams ?? []) as TeamRow[],
-    scansByTeam,
-    penaltySecondsByTeam,
-    wavesByNumber,
-    (stations ?? []).map((s: any) => ({ number: s.number, name: s.name, isRun: s.is_run }))
+  return (
+    <LeaderboardBoard
+      event={toPublicEvent(event)}
+      initialStandings={toPublicStandings(standings)}
+      initialGeneratedAt={new Date().toISOString()}
+      initialDivision={one(searchParams.division) ?? null}
+    />
   );
-
-  return <LeaderboardBoard initialStandings={initialStandings} />;
 }

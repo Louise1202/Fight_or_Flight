@@ -1,27 +1,31 @@
-// Team IDs follow the scheme "FF" + the heat's start time as HHMM (no
-// colon) + a 2-digit position number that resets to 01 at the start of
-// each heat. e.g. the 3rd team in the 07:30 heat is FF073003.
+// Two Team ID schemes exist (events.team_id_scheme, sql/019):
 //
-// Historically these came straight from the "Team ID" column of an
-// imported Excel sheet. When a team is built in the app instead, the id
-// is generated here following the same scheme.
+// - 'heat_position' (Fight or Flight, 19 Sept 2026): the event's letters
+//   (events.team_id_prefix, "FF") + the heat's start time as HHMM (no
+//   colon) + a 2-digit position number that resets to 01 at the start of
+//   each heat. e.g. the 3rd team in the 07:30 heat is FF073003. These ids
+//   follow the team when it changes heat. Everything in this file is for
+//   this scheme.
+// - 'sequential' (Survivor onwards): letters + 001, 002 ... handed out by
+//   the database (register_team / allocate_team_id). Permanent - they
+//   never change, whatever heat the team is in. Nothing here applies.
 //
 // The HHMM part is read from the heat's scheduled_start using its UTC
 // wall-clock components - this matches how the rest of the app treats
-// that column (app/api/admin/import/route.ts writes `${date}T${HH}:${MM}`
-// with no timezone; AdminDashboard.startEditSchedule reads getUTCHours()).
+// that column (heats are stored as `${date}T${HH}:${MM}:00` with no
+// timezone; AdminDashboard.startEditSchedule reads getUTCHours()).
 
-/** "FF" + HHMM of the heat's scheduled start (e.g. "FF0730"). */
-export function heatIdPrefix(scheduledStart: string): string {
+/** Letters + HHMM of the heat's scheduled start (e.g. "FF0730"). */
+export function heatIdPrefix(scheduledStart: string, letters: string = "FF"): string {
   const d = new Date(scheduledStart);
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `FF${hh}${mm}`;
+  return `${letters}${hh}${mm}`;
 }
 
-/** The trailing position number of a team id, or 0 if it doesn't parse. */
+/** The trailing position number of a heat_position team id, or 0 if it doesn't parse. */
 export function positionOf(teamId: string): number {
-  const digits = teamId.replace(/^FF\d{4}/, "");
+  const digits = teamId.replace(/^[A-Z]{2,4}\d{4}/, "");
   const n = parseInt(digits, 10);
   return Number.isFinite(n) ? n : 0;
 }

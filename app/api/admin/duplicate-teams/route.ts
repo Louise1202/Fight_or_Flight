@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAdminSession } from "@/lib/adminAuth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
+import { fetchEventScans } from "@/lib/activeEvent";
+import { adminContext, AdminClient, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -15,25 +15,25 @@ type Team = {
 function athletePairKey(t: Team): string {
   const a1 = (t.athlete_1 ?? "").trim().toLowerCase();
   const a2 = (t.athlete_2 ?? "").trim().toLowerCase();
-  return `${t.wave}::${a1}::${a2}`;
+  return `${t.wave ?? "none"}::${a1}::${a2}`;
 }
 
-async function findGroups() {
-  const admin = createAdminClient();
+async function findGroups(admin: AdminClient, eventId: string) {
   const { data: teams, error } = await admin
     .from("teams")
     .select("id, team_name, athlete_1, athlete_2, wave")
+    .eq("event_id", eventId)
+    .neq("status", "withdrawn")
     .order("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error("teams");
 
-  const { data: scanRows, error: scansErr } = await admin.from("scans").select("team_id");
-  if (scansErr) throw new Error(scansErr.message);
-  const teamsWithScans = new Set((scanRows ?? []).map((s) => s.team_id));
+  const scans = await fetchEventScans(eventId, admin);
+  const teamsWithScans = new Set(scans.map((s) => s.team_id));
 
   const groups = new Map<string, Team[]>();
   for (const t of (teams ?? []) as Team[]) {
     // Nothing to compare without both athlete names - never flagged.
-    if (!t.athlete_1 || !t.athlete_2 || t.wave == null) continue;
+    if (!t.athlete_1 || !t.athlete_2) continue;
     const key = athletePairKey(t);
     const list = groups.get(key) ?? [];
     list.push(t);
@@ -43,64 +43,67 @@ async function findGroups() {
   const duplicateGroups: { keep: Team; remove: Team[]; hasScans: boolean }[] = [];
   for (const list of groups.values()) {
     if (list.length <= 1) continue;
-    // Keep the earliest (lowest id, so lowest position) as the "real"
-    // one - the rest are the leftover copies.
-    const sorted = [...list].sort((a, b) => a.id.localeCompare(b.id));
-    const [keep, ...remove] = sorted;
-    duplicateGroups.push({
-      keep,
-      remove,
-      hasScans: list.some((t) => teamsWithScans.has(t.id)),
-    });
+    // Keep the earliest (lowest id) as the real one.
+    const [keep, ...remove] = [...list].sort((a, b) => a.id.localeCompare(b.id));
+    duplicateGroups.push({ keep, remove, hasScans: list.some((t) => teamsWithScans.has(t.id)) });
   }
-
   return duplicateGroups;
 }
 
 export async function GET() {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
   try {
-    const groups = await findGroups();
-    return NextResponse.json({ groups });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    const groups = await findGroups(ctx.admin, ctx.event.id);
+    return json({ groups });
+  } catch {
+    return fail("Couldn't check for duplicates - try again.", 500);
   }
 }
 
-// Deletes only the specific ids the admin has reviewed and sent back -
-// never re-derives "what to delete" itself, so nothing new can slip in
-// between the preview the admin looked at and what actually gets removed.
+// Deletes only the specific ids the admin reviewed and sent back, only
+// from the ACTIVE event, and never a team with a scan.
 export async function POST(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
-  const { ids } = await req.json();
-  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
-    return NextResponse.json({ error: "ids must be an array of team ids" }, { status: 400 });
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
+
+  const body = await readBody(req);
+  const ids = body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500 || ids.some((id) => typeof id !== "string")) {
+    return fail("Nothing selected to delete.");
   }
 
-  const admin = createAdminClient();
+  const { data: inEvent, error: evErr } = await admin
+    .from("teams")
+    .select("id")
+    .eq("event_id", event.id)
+    .in("id", ids as string[]);
+  if (evErr) return dbFail(evErr, "Couldn't check those teams.");
+  const allowed = new Set((inEvent ?? []).map((t) => t.id));
+  if (allowed.size === 0) return fail("Those teams aren't in the current event.");
 
-  const { data: scanRows } = await admin.from("scans").select("team_id").in("team_id", ids);
+  const { data: scanRows } = await admin.from("scans").select("team_id").in("team_id", [...allowed]);
   const blocked = new Set((scanRows ?? []).map((s) => s.team_id));
 
   let deleted = 0;
   const skipped: string[] = [];
-  for (const id of ids) {
-    if (blocked.has(id)) {
+  for (const id of ids as string[]) {
+    if (!allowed.has(id) || blocked.has(id)) {
       skipped.push(id);
       continue;
     }
-    const { data: viewer } = await admin.from("team_viewers").select("id").eq("team_id", id).maybeSingle();
-    if (viewer) {
-      await admin.from("team_viewers").delete().eq("id", viewer.id);
-      await admin.auth.admin.deleteUser(viewer.id).catch(() => {});
+    const { data: viewers } = await admin.from("team_viewers").select("id").eq("team_id", id);
+    const { error } = await admin.from("teams").delete().eq("id", id).eq("event_id", event.id);
+    if (error) {
+      skipped.push(id);
+      continue;
     }
-    const { error } = await admin.from("teams").delete().eq("id", id);
-    if (!error) deleted++;
+    deleted++;
+    // The team_viewers row went with the team (cascade); remove the login itself too.
+    for (const v of viewers ?? []) await admin.auth.admin.deleteUser(v.id).catch(() => {});
   }
 
-  return NextResponse.json({ ok: true, deleted, skipped });
+  return json({ ok: true, deleted, skipped });
 }

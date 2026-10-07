@@ -1,25 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { dbFail, fail, json, notAuthorized, readBody } from "../../_lib/guard";
 
-// Always dynamic - this hits the live database on every request and
-// must never be statically pre-rendered at build time (a build-time DB
-// call against real, ever-changing data is exactly what crashed the
-// build once already).
+// Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
+// Light/dark mode shared by every screen (not per event).
 export async function PATCH(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
-  const { theme } = await req.json();
-  if (theme !== "dark" && theme !== "light") {
-    return NextResponse.json({ error: "theme must be 'dark' or 'light'" }, { status: 400 });
-  }
+  if (!isAdminSession()) return notAuthorized();
+  const body = await readBody(req);
+  const theme = body?.theme;
+  if (theme !== "dark" && theme !== "light") return fail("Choose light or dark.");
 
   const admin = createAdminClient();
-  const { error } = await admin.from("app_settings").upsert({ id: 1, theme });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, theme });
+  const { error } = await admin.from("app_settings").update({ theme }).eq("id", 1);
+  if (error) return dbFail(error, "Couldn't save - try again.");
+  return json({ ok: true, theme });
 }

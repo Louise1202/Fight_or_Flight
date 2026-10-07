@@ -1,10 +1,26 @@
-import { StationDef, withFinish, realStationIndex } from "./stations";
+import { StationDef, realStationIndex, finishesAtLastStation } from "./stations";
 
 export type Scan = {
   station_number: number;
   event_type: "arrive" | "leave";
   scanned_at: string;
 };
+
+/**
+ * Oldest first. Two scans can share a timestamp (or be 1 ms apart, like
+ * the leave + finish pair of a one-tap finish), so ties fall back to the
+ * course order: lower station first, and "arrive" before "leave" at the
+ * same station. The database trigger uses the same order.
+ */
+export function sortScans<T extends Scan>(scans: T[]): T[] {
+  return [...scans].sort((a, b) => {
+    const t = new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime();
+    if (t !== 0) return t;
+    if (a.station_number !== b.station_number) return a.station_number - b.station_number;
+    if (a.event_type === b.event_type) return 0;
+    return a.event_type === "arrive" ? -1 : 1;
+  });
+}
 
 export type NextAction = {
   stationNumber: number;
@@ -26,6 +42,14 @@ export type NextAction = {
    * currently running (at a real station, or the gap has no run in it).
    */
   runName: string | null;
+  /**
+   * True when this is the "leave" of the last real station AND nothing
+   * comes after it on the course: the judge's single tap records both
+   * the leave and the finish (see recordScan in lib/useTeamScans.ts).
+   */
+  finishesHere: boolean;
+  /** Distance/reps/weights line for the station, if the admin set one. */
+  detail: string | null;
 };
 
 /** Only the stations a judge actually scans - run stations are display-only. */
@@ -56,15 +80,16 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
       label: "No stations configured yet - add stations in /admin first",
       isFinished: false,
       runName: null,
+      finishesHere: false,
+      detail: null,
     };
   }
 
   const maxStationNumber = stations.reduce((m, s) => Math.max(m, s.number), 0);
   const finishNumber = maxStationNumber + 1;
+  const lastCheckpoint = checkpoints[checkpoints.length - 1];
 
-  const sorted = [...scans].sort(
-    (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
-  );
+  const sorted = sortScans(scans);
   const last = sorted[sorted.length - 1];
 
   if (!last) {
@@ -78,6 +103,8 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
       label: `Arrive - Station ${displayNumber}: ${first.name}`,
       isFinished: false,
       runName: runNameInGap(stations, 0, first.number),
+      finishesHere: false,
+      detail: first.detail ?? null,
     };
   }
 
@@ -90,6 +117,8 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
       label: "Finished",
       isFinished: true,
       runName: null,
+      finishesHere: false,
+      detail: null,
     };
   }
 
@@ -104,17 +133,24 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
         label: `This team's last scan was at station ${last.station_number}, which doesn't match the current station list - check with the race organizer.`,
         isFinished: false,
         runName: null,
+        finishesHere: false,
+        detail: null,
       };
     }
     const displayNumber = realStationIndex(stations, station.number);
+    const finishesHere = station.number === lastCheckpoint.number && finishesAtLastStation(stations);
     return {
       stationNumber: station.number,
       displayNumber,
       stationName: station.name,
       eventType: "leave",
-      label: `Leave - Station ${displayNumber}: ${station.name}`,
+      label: finishesHere
+        ? `Done - Station ${displayNumber}: ${station.name} = FINISH`
+        : `Leave - Station ${displayNumber}: ${station.name}`,
       isFinished: false,
       runName: null,
+      finishesHere,
+      detail: station.detail ?? null,
     };
   }
 
@@ -132,6 +168,8 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
       label: "Scan at the FINISH line",
       isFinished: false,
       runName: runNameInGap(stations, last.station_number, finishNumber),
+      finishesHere: false,
+      detail: null,
     };
   }
   const displayNumber = realStationIndex(stations, nextCheckpoint.number);
@@ -143,6 +181,8 @@ export function getNextAction(scans: Scan[], stations: StationDef[]): NextAction
     label: `Arrive - Station ${displayNumber}: ${nextCheckpoint.name}`,
     isFinished: false,
     runName: runNameInGap(stations, last.station_number, nextCheckpoint.number),
+    finishesHere: false,
+    detail: nextCheckpoint.detail ?? null,
   };
 }
 
@@ -169,9 +209,7 @@ export function getCurrentLegElapsedMs(
     return now - new Date(arrive.scanned_at).getTime();
   }
 
-  const sorted = [...scans].sort(
-    (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
-  );
+  const sorted = sortScans(scans);
   const last = sorted[sorted.length - 1];
   const since = last ? new Date(last.scanned_at).getTime() : new Date(startTime).getTime();
   return now - since;
@@ -190,6 +228,10 @@ export function formatDuration(ms: number): string {
 export type Leg = {
   label: string;
   ms: number | null;
+  /** run legs are never numbered on screen; stations show their real-station number. */
+  kind: "run" | "station" | "finish";
+  /** 1, 2, 3 ... counting real stations only (null for runs and the finish). */
+  stationIndex: number | null;
 };
 
 /**
@@ -208,9 +250,7 @@ export function buildLegs(scans: Scan[], startTime: string, stations: StationDef
   const finishNumber = maxStationNumber + 1;
   const sequence = [...checkpoints, { number: finishNumber, name: "FINISH", isRun: false }];
 
-  const sorted = [...scans].sort(
-    (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
-  );
+  const sorted = sortScans(scans);
 
   const legs: Leg[] = [];
   let cursor = new Date(startTime).getTime();
@@ -225,23 +265,28 @@ export function buildLegs(scans: Scan[], startTime: string, stations: StationDef
       // an unfinished real station does), rather than only appearing
       // once it's actually over.
       const liveRunName = runNameInGap(stations, prevNumber, station.number);
-      if (liveRunName) legs.push({ label: liveRunName, ms: null });
+      if (liveRunName) legs.push({ label: liveRunName, ms: null, kind: "run", stationIndex: null });
       break;
     }
 
     const arriveMs = new Date(arrive.scanned_at).getTime();
     const runName = runNameInGap(stations, prevNumber, station.number);
     if (runName) {
-      legs.push({ label: runName, ms: arriveMs - cursor });
+      legs.push({ label: runName, ms: arriveMs - cursor, kind: "run", stationIndex: null });
     }
 
     if (station.number === finishNumber) {
-      legs.push({ label: "Finish", ms: null });
+      legs.push({ label: "Finish", ms: null, kind: "finish", stationIndex: null });
       break;
     }
 
     const leave = sorted.find((s) => s.station_number === station.number && s.event_type === "leave");
-    legs.push({ label: station.name, ms: leave ? new Date(leave.scanned_at).getTime() - arriveMs : null });
+    legs.push({
+      label: station.name,
+      ms: leave ? new Date(leave.scanned_at).getTime() - arriveMs : null,
+      kind: "station",
+      stationIndex: realStationIndex(stations, station.number),
+    });
 
     if (!leave) break; // still at this station - nothing after it yet
     cursor = new Date(leave.scanned_at).getTime();
@@ -261,9 +306,7 @@ export function buildSplits(scans: Scan[], startTime: string, stations: StationD
   const finishNumber = maxStationNumber + 1;
   const sequence = [...checkpoints, { number: finishNumber, name: "FINISH", isRun: false }];
 
-  const sorted = [...scans].sort(
-    (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
-  );
+  const sorted = sortScans(scans);
   const start = new Date(startTime).getTime();
   let cursor = start;
 

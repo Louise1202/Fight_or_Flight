@@ -37,8 +37,8 @@ const permanentMarker = Permanent_Marker({
 });
 
 export const metadata: Metadata = {
-  title: "Fight or Flight - Race Timing",
-  description: "Live race timing for the Fight or Flight team event",
+  title: "Race Timing",
+  description: "Live race timing for The Box team fitness events",
   icons: {
     icon: "/logo.png",
     apple: "/logo.png",

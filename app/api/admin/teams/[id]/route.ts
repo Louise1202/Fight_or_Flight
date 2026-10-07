@@ -1,166 +1,171 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAdminSession } from "@/lib/adminAuth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
 import { heatIdPrefix, nextTeamId, positionOf, renameForPosition } from "@/lib/teamId";
 import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
+import { adminContext, cleanText, dbFail, fail, json, lockedFail, readBody } from "../../_lib/guard";
 
-// Always dynamic - this hits the live database on every request and
-// must never be statically pre-rendered at build time (a build-time DB
-// call against real, ever-changing data is exactly what crashed the
-// build once already).
+// Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
-const EDITABLE_FIELDS = [
-  "team_name",
-  "athlete_1",
-  "athlete_2",
-  "division",
-  "wave",
-  "start_time",
-] as const;
+const DIVISIONS = ["Men", "Women", "Mixed"];
+const STATUSES = ["registered", "confirmed", "withdrawn"];
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
+// Edit a team of the ACTIVE event. Accepted fields: team_name,
+// athlete_1, athlete_2, division, wave (number or null = no heat yet),
+// paid (boolean), status ('registered' | 'confirmed' | 'withdrawn').
+//
+// Changing heat:
+// - sequential events: the id NEVER changes - only wave and start_time.
+// - heat_position events: the id follows the heat (letters + HHMM +
+//   position), then the old heat's gap is closed by autoFixTeamIds.
+// Either way a team that already has scans can't change heat.
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
 
-  const body = await req.json();
-  const update: Record<string, unknown> = {};
-  for (const field of EDITABLE_FIELDS) {
-    if (field in body) update[field] = body[field];
-  }
-
-  if (Object.keys(update).length === 0) {
-    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
-  }
-
-  const admin = createAdminClient();
-
-  // Normalise the incoming wave to a number (or null) so we can compare it
-  // to what's stored.
-  if ("wave" in update) {
-    const w = update.wave;
-    update.wave = w === "" || w == null ? null : Number(w);
-    if (update.wave != null && !Number.isInteger(update.wave)) {
-      return NextResponse.json({ error: "Heat must be a number" }, { status: 400 });
-    }
-  }
+  const body = await readBody(req);
+  if (!body) return fail("Nothing to save.");
 
   const { data: current, error: currentErr } = await admin
     .from("teams")
-    .select("id, wave, team_name")
+    .select("id, wave, team_name, status")
     .eq("id", params.id)
+    .eq("event_id", event.id)
     .maybeSingle();
-  if (currentErr) return NextResponse.json({ error: currentErr.message }, { status: 500 });
-  if (!current) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+  if (currentErr) return dbFail(currentErr, "Couldn't load this team.");
+  if (!current) return fail("That team isn't in the current event.", 404);
 
-  // Moving a team to a different heat re-generates its id (the HHMM prefix
-  // and position both belong to the heat). The FK ON UPDATE CASCADE from
-  // sql/013 carries the id change through to scans / penalties /
-  // assignments / team_viewers.
-  const movingHeat =
-    "wave" in update && update.wave != null && update.wave !== current.wave;
+  const update: Record<string, unknown> = {};
+
+  if ("team_name" in body) {
+    const name = cleanText(body.team_name, 60);
+    if (!name) return fail("A team name is required.");
+    update.team_name = name;
+  }
+  if ("athlete_1" in body) update.athlete_1 = cleanText(body.athlete_1, 80);
+  if ("athlete_2" in body) update.athlete_2 = cleanText(body.athlete_2, 80);
+  if ("division" in body) {
+    const d = cleanText(body.division, 20);
+    if (d && !DIVISIONS.includes(d)) return fail("Choose Men, Women or Mixed.");
+    update.division = d;
+  }
+  if ("paid" in body) {
+    if (typeof body.paid !== "boolean") return fail("Paid must be yes or no.");
+    update.paid = body.paid;
+  }
+  if ("status" in body) {
+    if (typeof body.status !== "string" || !STATUSES.includes(body.status)) return fail("That status isn't valid.");
+    update.status = body.status;
+  }
+
+  let movingHeat = false;
+  if ("wave" in body) {
+    const w = body.wave;
+    const wave = w === "" || w == null ? null : Number(w);
+    if (wave != null && !Number.isInteger(wave)) return fail("Choose a heat.");
+    if (wave !== current.wave) {
+      movingHeat = true;
+      update.wave = wave;
+    }
+  }
+
+  if (Object.keys(update).length === 0) return json({ ok: true, id: params.id });
 
   if (movingHeat) {
-    const destWave = update.wave as number;
-
-    // Guard: never re-id a team that already has timing data recorded
-    // against a heat that has actually been started - that would corrupt
-    // its splits. (During event build there are no scans, so this is
-    // inert then.)
     const { count: scanCount } = await admin
       .from("scans")
       .select("id", { count: "exact", head: true })
       .eq("team_id", params.id);
-    if (scanCount && scanCount > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "This team already has scans recorded - move it before the race, or clear its scans first.",
-        },
-        { status: 409 }
-      );
+    if ((scanCount ?? 0) > 0) {
+      return fail("This team already has scans recorded, so it can't change heat.", 409);
     }
 
-    const { data: heat, error: heatErr } = await admin
-      .from("waves")
-      .select("wave_number, scheduled_start")
-      .eq("wave_number", destWave)
-      .maybeSingle();
-    if (heatErr) return NextResponse.json({ error: heatErr.message }, { status: 500 });
-    if (!heat) {
-      return NextResponse.json({ error: `Heat ${destWave} doesn't exist` }, { status: 400 });
+    const destWave = update.wave as number | null;
+    let heat: { wave_number: number; scheduled_start: string } | null = null;
+    if (destWave != null) {
+      const { data, error: heatErr } = await admin
+        .from("waves")
+        .select("wave_number, scheduled_start, actual_start, actual_end")
+        .eq("event_id", event.id)
+        .eq("wave_number", destWave)
+        .maybeSingle();
+      if (heatErr) return dbFail(heatErr, "Couldn't check that heat.");
+      if (!data) return fail(`Heat ${destWave} doesn't exist.`);
+      // A team joining a running heat would start with time already on
+      // its clock; joining an ended heat, every scan would be refused.
+      if (data.actual_start) {
+        return fail(`Heat ${destWave} has already ${data.actual_end ? "ended" : "started"} - pick a heat that hasn't started.`, 409);
+      }
+      heat = data;
     }
 
-    const { data: allTeams, error: allErr } = await admin.from("teams").select("id, wave");
-    if (allErr) return NextResponse.json({ error: allErr.message }, { status: 500 });
+    // Keep the legacy start_time column pointed at the heat's plan.
+    update.start_time = heat?.scheduled_start ?? `${event.event_date}T00:00:00`;
 
-    const allIds = new Set((allTeams ?? []).map((t) => t.id));
-    allIds.delete(params.id);
-    const idsInHeat = (allTeams ?? [])
-      .filter((t) => t.wave === destWave && t.id !== params.id)
-      .map((t) => t.id);
-
-    const newId = nextTeamId(heatIdPrefix(heat.scheduled_start), idsInHeat, allIds);
-    update.id = newId;
-    // Keep the legacy fallback column pointed at the new heat's plan.
-    update.start_time = heat.scheduled_start;
-
-    // The name's own position label needs to track the move too - "Team
-    // 01" landing at position 9 in its new heat becomes "Team 09". Uses
-    // whatever name this same request is already setting, if any,
-    // otherwise the team's current name. A custom name with no number in
-    // it is left completely untouched.
-    const nameToRename = (update.team_name as string | undefined) ?? current.team_name;
-    update.team_name = renameForPosition(nameToRename, positionOf(newId));
+    if (event.team_id_scheme === "heat_position" && heat) {
+      const { data: allTeams, error: allErr } = await admin.from("teams").select("id, wave").eq("event_id", event.id);
+      if (allErr) return dbFail(allErr, "Couldn't load the teams.");
+      const allIds = new Set((allTeams ?? []).map((t) => t.id));
+      allIds.delete(params.id);
+      const idsInHeat = (allTeams ?? []).filter((t) => t.wave === destWave && t.id !== params.id).map((t) => t.id);
+      const newId = nextTeamId(heatIdPrefix(heat.scheduled_start, event.team_id_prefix), idsInHeat, allIds);
+      update.id = newId;
+      const nameToRename = (update.team_name as string | undefined) ?? current.team_name;
+      update.team_name = renameForPosition(nameToRename, positionOf(newId));
+    }
   }
 
-  const { error } = await admin.from("teams").update(update).eq("id", params.id);
+  const { error } = await admin.from("teams").update(update).eq("id", params.id).eq("event_id", event.id);
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error.code === "23505") return fail("That team name is already taken.", 409);
+    return dbFail(error, "Couldn't save this team.");
   }
 
-  // Closes the gap left behind in the OLD heat (everyone after this
-  // team's old position there shifts down, id and name both) - this is
-  // the same automatic fixer that runs on every admin page load, just
-  // triggered right now instead of waiting for the next one.
-  if (movingHeat) {
-    await autoFixTeamIds();
+  if (movingHeat && event.team_id_scheme === "heat_position") {
+    await autoFixTeamIds(event.id);
   }
 
-  return NextResponse.json({ ok: true, id: update.id ?? params.id });
+  return json({ ok: true, id: (update.id as string | undefined) ?? params.id });
 }
 
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
-  }
+// Delete a team of the ACTIVE event. Only possible while it has no
+// scans (the database refuses otherwise, RT002) - withdraw it instead.
+// Its judge assignments go with it, and so does its team login (the
+// link row and the login itself).
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
 
-  const admin = createAdminClient();
-
-  // Remove the team's own login first - we need its id to also delete the
-  // Supabase Auth user, which the FK cascade can't do. Everything else
-  // (scans, penalties, judge assignments) is cleared by ON DELETE CASCADE
-  // when the team row goes.
-  const { data: viewer } = await admin
-    .from("team_viewers")
+  const { data: team } = await admin
+    .from("teams")
     .select("id")
-    .eq("team_id", params.id)
+    .eq("id", params.id)
+    .eq("event_id", event.id)
     .maybeSingle();
+  if (!team) return fail("That team isn't in the current event.", 404);
 
-  if (viewer) {
-    await admin.from("team_viewers").delete().eq("id", viewer.id);
-    await admin.auth.admin.deleteUser(viewer.id).catch(() => {});
+  const { count: scanCount } = await admin
+    .from("scans")
+    .select("id", { count: "exact", head: true })
+    .eq("team_id", params.id);
+  if ((scanCount ?? 0) > 0) {
+    return fail("This team already has results recorded. Withdraw it instead of deleting it.", 409, {
+      code: "RT002",
+      canWithdraw: true,
+    });
   }
 
-  const { error } = await admin.from("teams").delete().eq("id", params.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const { data: viewers } = await admin.from("team_viewers").select("id").eq("team_id", params.id);
 
-  return NextResponse.json({ ok: true });
+  const { error } = await admin.from("teams").delete().eq("id", params.id).eq("event_id", event.id);
+  if (error) return dbFail(error, "Couldn't delete this team.");
+
+  // The team_viewers row went with the team (cascade); the login itself
+  // lives in Supabase Auth and has to be removed separately.
+  for (const v of viewers ?? []) await admin.auth.admin.deleteUser(v.id).catch(() => {});
+
+  return json({ ok: true });
 }

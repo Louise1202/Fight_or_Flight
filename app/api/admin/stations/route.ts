@@ -1,38 +1,41 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAdminSession } from "@/lib/adminAuth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
+import { adminContext, cleanText, dbFail, eventHasScans, fail, json, lockedFail, readBody } from "../_lib/guard";
 
-// Always dynamic - this hits the live database on every request and
-// must never be statically pre-rendered at build time (a build-time DB
-// call against real, ever-changing data is exactly what crashed the
-// build once already).
+// Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
-// Stations are always added at the end (number = current max + 1), never
-// inserted in the middle - the "next station" logic everywhere else in
-// the app relies on a plain, gapless 1..N sequence.
+// Stations of the ACTIVE event. Always added at the end (number = max + 1).
+// Adding is blocked once this event has a scan: the finish line is
+// "one past the last station", so a new station would change what an
+// already-recorded finish means.
 export async function POST(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
+
+  const body = await readBody(req);
+  const name = cleanText(body?.name, 80);
+  if (!name) return fail("A station name is required.");
+  const isRun = body?.isRun === true;
+  const detail = cleanText(body?.detail, 120);
+
+  try {
+    if (await eventHasScans(admin, event.id)) {
+      return fail("Teams have already been scanned in this event, so stations can't be added any more.", 409);
+    }
+  } catch {
+    return fail("Couldn't check the event's scans.", 500);
   }
 
-  const { name, isRun } = await req.json();
-  const clean = typeof name === "string" ? name.trim() : "";
-  if (!clean) {
-    return NextResponse.json({ error: "A station name is required" }, { status: 400 });
-  }
-  const isRunFlag = !!isRun;
-
-  const admin = createAdminClient();
-  const { data: existing, error: fetchErr } = await admin.from("stations").select("number");
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
-
+  const { data: existing, error: fetchErr } = await admin.from("stations").select("number").eq("event_id", event.id);
+  if (fetchErr) return dbFail(fetchErr, "Couldn't load the stations.");
   const nextNumber = (existing ?? []).reduce((max, s) => Math.max(max, s.number), 0) + 1;
 
   const { error } = await admin
     .from("stations")
-    .insert({ number: nextNumber, name: clean, is_run: isRunFlag });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    .insert({ event_id: event.id, number: nextNumber, name, is_run: isRun, detail });
+  if (error) return dbFail(error, "Couldn't add that station.");
 
-  return NextResponse.json({ ok: true, station: { number: nextNumber, name: clean, isRun: isRunFlag } });
+  return json({ ok: true, station: { number: nextNumber, name, isRun, detail } });
 }

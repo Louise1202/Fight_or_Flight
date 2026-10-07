@@ -34,6 +34,10 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/admin") || // admin API checks its own cookie
     path.startsWith("/leaderboard") || // public spectator screen
     path.startsWith("/api/leaderboard") || // public leaderboard data
+    path.startsWith("/register") || // public team sign-up
+    path.startsWith("/api/register") || // sign-up API (validates and rate-limits itself)
+    path.startsWith("/results") || // public results of finished events
+    path.startsWith("/api/results") ||
     path.startsWith("/style-guide"); // public design reference page
 
   // Judge/team routes need a real Supabase session.

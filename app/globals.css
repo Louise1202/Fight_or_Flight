@@ -18,6 +18,45 @@
      be dropped into rgba(var(--fof-ink-rgb), alpha) below. Light specks on
      a dark surface in dark mode. */
   --fof-ink-rgb: 244, 241, 234;
+  /* Accent glow behind the page and the stamped button gradient, so a
+     brand can swap them along with --fof-red. */
+  --fof-glow-rgb: 232, 38, 45;
+  --fof-btn-hi: #f14149;
+  --fof-btn-lo: #a81d22;
+  --fof-btn-edge: #6e1013;
+}
+
+/* Survivor (7 Nov 2026) - night-island blues from the poster. Any page
+   rendered for a Survivor event carries data-brand="survivor" on its root.
+   The token names stay fof* so no className anywhere needs to change;
+   --fof-red simply becomes the Survivor accent blue. */
+[data-brand="survivor"] {
+  --fof-red: #2E9BFF;
+  --fof-black: #050B18;
+  --fof-paper: #EEF4FF;
+  --fof-gunmetal: #8A9BBC;
+  --fof-charcoal: #1B2C4D;
+  --fof-panel: #0A1730;
+  --fof-sunk: #03070F;
+  --fof-rule: #1B2C4D;
+  --fof-ink-rgb: 238, 244, 255;
+  --fof-glow-rgb: 46, 155, 255;
+  --fof-btn-hi: #5cb4ff;
+  --fof-btn-lo: #1563b8;
+  --fof-btn-edge: #0d3f78;
+}
+[data-brand="survivor"][data-theme="light"],
+[data-theme="light"] [data-brand="survivor"],
+[data-brand="survivor"] [data-theme="light"] {
+  --fof-red: #1570D6;
+  --fof-black: #EEF4FF;
+  --fof-paper: #050B18;
+  --fof-gunmetal: #4F5F80;
+  --fof-charcoal: #C9D7EE;
+  --fof-panel: #E1EBFA;
+  --fof-sunk: #FFFFFF;
+  --fof-rule: #C3D2EA;
+  --fof-ink-rgb: 5, 11, 24;
 }
 
 /* Scoped light-mode override. Only elements INSIDE something carrying
@@ -32,7 +71,7 @@
   --fof-panel: #EAE6DC;
   --fof-sunk: #FFFFFF;
   --fof-rule: #D0CBBE;
-  /* fof-red stays the same in both themes - it's the brand accent. */
+  /* fof-red stays the same in both themes for Fight or Flight - it's the brand accent. */
   --fof-ink-rgb: 14, 13, 12;
 }
 
@@ -50,7 +89,7 @@ body {
     url("/texture/grain.svg"),
     repeating-linear-gradient(135deg, rgba(var(--fof-ink-rgb), 0.028) 0 1px, transparent 1px 4px),
     repeating-linear-gradient(45deg, rgba(var(--fof-ink-rgb), 0.018) 0 1px, transparent 1px 5px),
-    radial-gradient(120% 90% at 50% -10%, rgba(232, 38, 45, 0.1), transparent 62%);
+    radial-gradient(120% 90% at 50% -10%, rgba(var(--fof-glow-rgb), 0.12), transparent 62%);
   background-blend-mode: overlay, normal, normal, normal;
   background-attachment: fixed;
 }
@@ -102,10 +141,11 @@ textarea {
    badge's hardware feel. Presses down visibly on tap for instant
    feedback, independent of how long the actual save takes. */
 .btn-stamped {
-  background: linear-gradient(160deg, #f14149 0%, #e8262d 50%, #a81d22 100%);
-  border: 1px solid #6e1013;
+  background: linear-gradient(160deg, var(--fof-btn-hi) 0%, var(--fof-red) 50%, var(--fof-btn-lo) 100%);
+  border: 1px solid var(--fof-btn-edge);
+  color: #fff;
   box-shadow:
-    0 3px 0 #6e1013,
+    0 3px 0 var(--fof-btn-edge),
     0 5px 8px rgba(0, 0, 0, 0.6),
     inset 0 1px 1px rgba(255, 255, 255, 0.35),
     inset 0 -2px 4px rgba(0, 0, 0, 0.3);
@@ -114,8 +154,31 @@ textarea {
 .btn-stamped:active {
   transform: translateY(2px);
   box-shadow:
-    0 1px 0 #6e1013,
+    0 1px 0 var(--fof-btn-edge),
     0 2px 3px rgba(0, 0, 0, 0.5),
     inset 0 1px 1px rgba(255, 255, 255, 0.2),
     inset 0 -1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Survivor badge is a square image with black corners - shown as a circle. */
+.logo-round {
+  border-radius: 9999px;
+  object-fit: cover;
+}
+
+/* One-tap finish button on the judge screen. */
+.btn-finish {
+  background: linear-gradient(160deg, #62e3a4 0%, #3fd08a 50%, #1f8d58 100%);
+  border: 1px solid #145c39;
+  color: #04150c;
+  box-shadow: 0 3px 0 #145c39, 0 5px 8px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-finish:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #145c39, 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-stamped, .btn-finish { transition: none; }
 }

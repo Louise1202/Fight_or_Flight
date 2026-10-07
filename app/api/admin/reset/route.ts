@@ -1,68 +1,86 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAdminSession } from "@/lib/adminAuth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
+import { chunk } from "@/lib/fetchAll";
+import { teamIdsForEvent } from "@/lib/activeEvent";
+import { adminContext, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
-// Always dynamic - this hits the live database on every request and
-// must never be statically pre-rendered at build time (a build-time DB
-// call against real, ever-changing data is exactly what crashed the
-// build once already).
+// Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
+// Resets the ACTIVE event only - never another event, never judges.
+// Refused for a locked event (the database refuses it too).
+// Body: { scope: 'race-data' | 'full', confirmName: <the event's exact name> }
 export async function POST(req: NextRequest) {
-  if (!isAdminSession()) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 401 });
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  if (event.locked) return lockedFail();
+
+  const body = await readBody(req);
+  const scope = body?.scope;
+  if (scope !== "race-data" && scope !== "full") return fail("Choose what to reset.");
+  if (typeof body?.confirmName !== "string" || body.confirmName.trim() !== event.name.trim()) {
+    return fail(`Type the event name (${event.name}) exactly to confirm.`);
   }
 
-  const { scope } = await req.json();
-  if (scope !== "race-data" && scope !== "full") {
-    return NextResponse.json(
-      { error: "scope must be 'race-data' or 'full'" },
-      { status: 400 }
-    );
+  // A full reset would delete teams' signed registrations (consents,
+  // signatures, medical answers) - never allowed once teams have signed
+  // up themselves. Withdraw individual teams instead.
+  if (scope === "full") {
+    const { count: signedUp } = await admin
+      .from("teams")
+      .select("id", { count: "exact", head: true })
+      .eq("event_id", event.id)
+      .not("registered_at", "is", null);
+    if ((signedUp ?? 0) > 0) {
+      return fail(
+        `${signedUp} team${signedUp === 1 ? " has" : "s have"} signed up with a signed registration form, so a full reset isn't allowed. Use "Reset race data" instead, or withdraw teams one by one.`,
+        409
+      );
+    }
   }
 
-  const admin = createAdminClient();
+  const teamIds = await teamIdsForEvent(event.id, admin);
 
-  // Always cleared: every scan, every penalty, and every heat's real
-  // start/end - this is what "re-run the same event from zero" means.
-  const { error: scansErr } = await admin.from("scans").delete().not("id", "is", null);
-  if (scansErr) return NextResponse.json({ error: scansErr.message }, { status: 500 });
-
-  const { error: penErr } = await admin.from("penalties").delete().not("id", "is", null);
-  if (penErr) return NextResponse.json({ error: penErr.message }, { status: 500 });
-
+  // Race data: this event's scans, penalties and heat start/end times.
+  for (const part of chunk(teamIds)) {
+    const { error: scansErr } = await admin.from("scans").delete().in("team_id", part);
+    if (scansErr) return dbFail(scansErr, "Couldn't clear the scans.");
+    const { error: penErr } = await admin.from("penalties").delete().in("team_id", part);
+    if (penErr) return dbFail(penErr, "Couldn't clear the penalties.");
+  }
   const { error: waveErr } = await admin
     .from("waves")
-    .update({ actual_start: null, actual_end: null })
-    .not("wave_number", "is", null);
-  if (waveErr) return NextResponse.json({ error: waveErr.message }, { status: 500 });
+    .update({ actual_start: null, actual_end: null, end_reason: null })
+    .eq("event_id", event.id);
+  if (waveErr) return dbFail(waveErr, "Couldn't clear the heat times.");
 
+  let teamsDeleted = 0;
   if (scope === "full") {
-    // Children first, to satisfy foreign key constraints, and to collect
-    // the auth user ids we need to delete before their owning rows go.
-    const { error: assignErr } = await admin
-      .from("judge_team_assignments")
-      .delete()
-      .not("judge_id", "is", null);
-    if (assignErr) return NextResponse.json({ error: assignErr.message }, { status: 500 });
+    // This event's teams, their judge assignments and their team logins.
+    // Judges themselves are shared by all events and are kept.
+    const viewerIds: string[] = [];
+    for (const part of chunk(teamIds)) {
+      const { data: viewers } = await admin.from("team_viewers").select("id").in("team_id", part);
+      viewerIds.push(...(viewers ?? []).map((v) => v.id));
+      const { error: assignErr } = await admin.from("judge_team_assignments").delete().in("team_id", part);
+      if (assignErr) return dbFail(assignErr, "Couldn't clear the judge assignments.");
+      const { error: viewersErr } = await admin.from("team_viewers").delete().in("team_id", part);
+      if (viewersErr) return dbFail(viewersErr, "Couldn't clear the team logins.");
+    }
+    for (const id of viewerIds) await admin.auth.admin.deleteUser(id).catch(() => {});
 
-    const { data: viewers } = await admin.from("team_viewers").select("id");
-    const { error: viewersErr } = await admin.from("team_viewers").delete().not("id", "is", null);
-    if (viewersErr) return NextResponse.json({ error: viewersErr.message }, { status: 500 });
-    for (const v of viewers ?? []) {
-      await admin.auth.admin.deleteUser(v.id).catch(() => {});
+    for (const part of chunk(teamIds)) {
+      const { error: teamsErr } = await admin.from("teams").delete().eq("event_id", event.id).in("id", part);
+      if (teamsErr) return dbFail(teamsErr, "Couldn't delete the teams.");
+      teamsDeleted += part.length;
     }
 
-    const { data: judges } = await admin.from("judges").select("id");
-    const { error: judgesErr } = await admin.from("judges").delete().not("id", "is", null);
-    if (judgesErr) return NextResponse.json({ error: judgesErr.message }, { status: 500 });
-    for (const j of judges ?? []) {
-      await admin.auth.admin.deleteUser(j.id).catch(() => {});
-    }
-
-    const { error: teamsErr } = await admin.from("teams").delete().not("id", "is", null);
-    if (teamsErr) return NextResponse.json({ error: teamsErr.message }, { status: 500 });
+    // Team numbers are never handed out twice (someone may still have an
+    // old confirmation with that ID), so numbering carries on.
+    await admin.from("events").update({ status: "setup" }).eq("id", event.id);
+  } else if (event.status === "live") {
+    await admin.from("events").update({ status: "setup" }).eq("id", event.id);
   }
 
-  return NextResponse.json({ ok: true, scope });
+  return json({ ok: true, scope, teamsDeleted });
 }

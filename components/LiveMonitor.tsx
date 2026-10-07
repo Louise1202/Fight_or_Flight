@@ -30,14 +30,34 @@ type LiveRow = {
 
 type Counts = { finished: number; inProgress: number; stopped: number; notStarted: number; total: number };
 
-type WaveInfo = { wave_number: number; scheduled_start: string; actual_start: string | null; actual_end: string | null };
+type WaveInfo = {
+  wave_number: number;
+  scheduled_start: string;
+  actual_start: string | null;
+  actual_end: string | null;
+  end_reason?: "all_finished" | "time_limit" | "manual" | null;
+};
+
+type EventInfo = { id: string; name: string; theme: string; status: string; heat_minutes: number };
+
+// Real start/end moments are true instants - shown in race-venue time,
+// whatever timezone the admin's laptop happens to be set to.
+const SAST_CLOCK = new Intl.DateTimeFormat("en-ZA", {
+  timeZone: "Africa/Johannesburg",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 function clockTime(iso: string): string {
-  const d = new Date(iso);
-  const hour12 = ((d.getUTCHours() + 11) % 12) + 1;
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ampm = d.getUTCHours() < 12 ? "AM" : "PM";
-  return `${hour12}:${mm} ${ampm}`;
+  return SAST_CLOCK.format(new Date(iso));
+}
+
+function endReasonText(reason: WaveInfo["end_reason"]): string {
+  if (reason === "time_limit") return " (time limit)";
+  if (reason === "manual") return " (ended by admin)";
+  if (reason === "all_finished") return " (all finished)";
+  return "";
 }
 
 function staleness(lastUpdate: string | null, now: number): "fresh" | "warn" | "stale" {
@@ -75,6 +95,7 @@ export default function LiveMonitor() {
   const [rows, setRows] = useState<LiveRow[]>([]);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [waves, setWaves] = useState<WaveInfo[]>([]);
+  const [event, setEvent] = useState<EventInfo | null>(null);
   const [now, setNow] = useState(Date.now());
   const [loaded, setLoaded] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -95,6 +116,7 @@ export default function LiveMonitor() {
         setRows(data.standings ?? []);
         setCounts(data.counts);
         setWaves(data.waves ?? []);
+        setEvent(data.event ?? null);
         setLoaded(true);
       } catch {
         // A real network hiccup (offline, DNS, etc) - the next poll
@@ -134,16 +156,44 @@ export default function LiveMonitor() {
     }))
     .sort((a, b) => a.waveNumber - b.waveNumber);
 
+  const heatLimitMs = (event?.heat_minutes ?? 0) * 60_000;
+  const runningHeats = waves
+    .filter((w) => w.actual_start && !w.actual_end)
+    .sort((a, b) => a.wave_number - b.wave_number);
+
   return (
     <section className="mb-10">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-display text-lg">Live race monitor</h2>
+        <h2 className="font-display text-lg">
+          Live race monitor{event ? <span className="text-fofGunmetal"> &middot; {event.name}</span> : null}
+        </h2>
         {counts && (
           <p className="text-sm text-fofGunmetal">
             {counts.finished} finished · {counts.inProgress} racing · {counts.stopped} stopped · {counts.notStarted} not started
           </p>
         )}
       </div>
+
+      {loaded && !fetchError && runningHeats.length > 0 && (
+        <ul className="mb-4 space-y-1 text-sm text-fofGunmetal">
+          {runningHeats.map((w) => {
+            const ran = now - new Date(w.actual_start!).getTime();
+            const left = heatLimitMs > 0 ? heatLimitMs - ran : null;
+            return (
+              <li key={w.wave_number}>
+                <span className="text-fofPaper">Heat {w.wave_number}</span> started {clockTime(w.actual_start!)}
+                <span className="nums"> &middot; running {formatDuration(ran)}</span>
+                {left != null && (
+                  <span className={`nums ${left <= 5 * 60_000 ? "text-fofRed" : ""}`}>
+                    {" "}
+                    &middot; {left > 0 ? `${formatDuration(left)} left of ${event!.heat_minutes} min` : `over the ${event!.heat_minutes} min limit`}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {!loaded ? (
         <p className="text-sm text-fofGunmetal">Loading live status...</p>
@@ -247,8 +297,21 @@ export default function LiveMonitor() {
                     <div key={group.waveNumber}>
                       <p className="mb-2 text-sm text-fofRed">
                         Heat {group.waveNumber}
-                        {group.wave?.actual_end && <> &middot; ended {clockTime(group.wave.actual_end)}</>}
-                        {ranMs != null && <> &middot; ran {formatDuration(ranMs)}</>}
+                        {group.wave?.actual_start && <> &middot; started {clockTime(group.wave.actual_start)}</>}
+                        {group.wave?.actual_end && (
+                          <>
+                            {" "}
+                            &middot; ended {clockTime(group.wave.actual_end)}
+                            {endReasonText(group.wave.end_reason)}
+                          </>
+                        )}
+                        {ranMs != null && (
+                          <>
+                            {" "}
+                            &middot; ran {formatDuration(ranMs)}
+                            {event?.heat_minutes ? ` of ${event.heat_minutes} min` : ""}
+                          </>
+                        )}
                         {" \u00b7 "}
                         {group.teams.length} stopped, {group.finishedCount} finished
                       </p>

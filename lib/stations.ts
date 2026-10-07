@@ -3,7 +3,29 @@
 // event report - without touching code. This file is the shared shape
 // everything else builds on.
 
-export type StationDef = { number: number; name: string; isRun: boolean };
+export type StationDef = { number: number; name: string; isRun: boolean; detail?: string | null };
+
+/** Database row (snake_case) to StationDef. */
+export function toStationDef(s: { number: number; name: string; is_run: boolean; detail?: string | null }): StationDef {
+  return { number: s.number, name: s.name, isRun: s.is_run, detail: s.detail ?? null };
+}
+
+/**
+ * True when nothing (no run) comes after the last real station - leaving
+ * that station IS the finish, so the judge taps once, not twice. Must
+ * match event_finishes_at_last_station() in sql/019.
+ */
+export function finishesAtLastStation(stations: StationDef[]): boolean {
+  const real = stations.filter((s) => !s.isRun);
+  if (real.length === 0) return false;
+  const lastReal = Math.max(...real.map((s) => s.number));
+  return !stations.some((s) => s.isRun && s.number > lastReal);
+}
+
+/** One past the highest station number - must match event_finish_number() in sql/019. */
+export function finishNumber(stations: StationDef[]): number {
+  return stations.reduce((m, s) => Math.max(m, s.number), 0) + 1;
+}
 
 /**
  * The finish line is never stored as a row in the stations table - it's

@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import QRCode from "qrcode";
 
-type Team = { id: string; team_name: string };
+type Team = { id: string; team_name: string; wave?: number | null };
 
-export default function QrPrintSheet({ teams }: { teams: Team[] }) {
+export default function QrPrintSheet({ teams, eventTitle }: { teams: Team[]; eventTitle?: string }) {
   const [dataUrls, setDataUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -34,7 +34,7 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 print:px-0 print:py-0">
-      <div className="mb-6 flex items-center justify-between print:hidden">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div>
           <Link
             href="/admin"
@@ -43,14 +43,16 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
             &larr; Back to admin
           </Link>
           <h1 className="font-display text-2xl">Team QR codes</h1>
+          {eventTitle && <p className="text-sm text-fofPaper">{eventTitle}</p>}
           <p className="text-sm text-fofGunmetal">
-            {teams.length} teams - each code just encodes the team ID (e.g.{" "}
-            {teams[0]?.id}), nothing else.
+            {teams.length === 0
+              ? "No teams yet."
+              : `${teams.length} teams - each code just holds the Team ID (e.g. ${teams[0]?.id}), nothing else.`}
           </p>
         </div>
         <button
           onClick={() => window.print()}
-          disabled={!allReady}
+          disabled={!allReady || teams.length === 0}
           className="tap-target rounded btn-stamped px-6 font-display disabled:opacity-50"
         >
           {allReady ? "Print" : "Generating..."}
@@ -69,8 +71,11 @@ export default function QrPrintSheet({ teams }: { teams: Team[] }) {
             ) : (
               <div className="aspect-square w-full animate-pulse bg-gray-200" />
             )}
-            <p className="mt-2 font-display text-sm text-black">{t.team_name}</p>
-            <p className="font-mono text-xs text-gray-600">{t.id}</p>
+            <p className="mt-2 break-words font-display text-sm text-black">{t.team_name}</p>
+            <p className="font-mono text-xs text-gray-600">
+              {t.id}
+              {t.wave != null ? ` · Heat ${t.wave}` : ""}
+            </p>
           </div>
         ))}
       </div>

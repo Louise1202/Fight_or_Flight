@@ -3,7 +3,12 @@ export type Wave = {
   scheduled_start: string;
   actual_start: string | null;
   actual_end: string | null;
+  event_id?: string;
+  /** Why the heat ended: everyone finished, the time limit, or the admin. */
+  end_reason?: "all_finished" | "time_limit" | "manual" | null;
 };
+
+export const WAVE_COLUMNS = "event_id, wave_number, scheduled_start, actual_start, actual_end, end_reason";
 
 /**
  * The single source of truth for "when did this team's race actually

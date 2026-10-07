@@ -24,7 +24,9 @@ export default function AdminLoginPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setError("Wrong password.");
+      setError(
+        res.status === 429 ? "Too many attempts. Wait 15 minutes and try again." : "Wrong password."
+      );
       return;
     }
 

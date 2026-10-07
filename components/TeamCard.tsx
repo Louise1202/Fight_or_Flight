@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getNextAction, Scan } from "@/lib/timing";
+import { getNextAction } from "@/lib/timing";
 import { StationDef } from "@/lib/stations";
-import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
+import { hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
+import { useHeat, useHeatTimeLimit } from "@/lib/useHeat";
+import { useTeamScans, ScanRow } from "@/lib/useTeamScans";
+import { serverNow } from "@/lib/clock";
+import { friendlyDbError } from "@/lib/events";
 
 type Team = {
   id: string;
+  event_id: string;
   team_name: string;
   athlete_1: string | null;
   athlete_2: string | null;
@@ -17,280 +22,44 @@ type Team = {
   wave: number | null;
 };
 
-type ScanRow = Scan & { id: number };
-
-type PendingScan = {
-  client_scan_id: string;
-  team_id: string;
-  station_number: number;
-  event_type: "arrive" | "leave";
-  judge_id: string;
-  queued_at: string;
-};
-
-function queueKey(teamId: string) {
-  return `pending_scans_${teamId}`;
-}
-
-function readQueue(teamId: string): PendingScan[] {
-  try {
-    const raw = localStorage.getItem(queueKey(teamId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    localStorage.removeItem(queueKey(teamId));
-    return [];
-  }
-}
-
-function writeQueue(teamId: string, list: PendingScan[]) {
-  try {
-    localStorage.setItem(queueKey(teamId), JSON.stringify(list));
-  } catch {
-    // storage full/unavailable - nothing more to do locally
-  }
-}
-
-function newScanId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  }
-  const rand = () => Math.floor(Math.random() * 16).toString(16);
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) =>
-    c === "y" ? (Math.floor(Math.random() * 4) + 8).toString(16) : rand()
-  );
-}
-
-// queued_at is this phone's own record of exactly when the judge tapped
-// Confirm - it must reach the database as scanned_at, or a scan queued
-// offline and synced later gets stamped at sync time instead of the
-// real moment it happened. Both places that insert a scan go through
-// this helper.
-function toScanInsert(p: PendingScan) {
-  const { queued_at, ...rest } = p;
-  return { ...rest, scanned_at: queued_at };
-}
-
 export default function TeamCard({
   team,
   judgeId,
   initialScans,
   initialWave,
   stations,
+  heatMinutes,
 }: {
   team: Team;
   judgeId: string;
   initialScans: ScanRow[];
   initialWave: Wave | null;
   stations: StationDef[];
+  heatMinutes: number;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const [scans, setScans] = useState<ScanRow[]>(initialScans);
-  const [wave, setWave] = useState<Wave | null>(initialWave);
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [pendingCount, setPendingCount] = useState(0);
+  const wave = useHeat(team.event_id, team.wave, initialWave);
+  const { scans, pendingCount, message, busy, record, flush } = useTeamScans({
+    teamId: team.id,
+    judgeId,
+    stations,
+    initialScans,
+  });
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penaltySeconds, setPenaltySeconds] = useState("");
   const [penaltyNote, setPenaltyNote] = useState("");
   const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
-  const startTime = effectiveStartTime(team.start_time, wave);
+  const locallyTimedOut = useHeatTimeLimit(team.event_id, wave, heatMinutes, serverNow);
+  const ended = hasWaveEnded(wave) || locallyTimedOut;
   const next = getNextAction(scans, stations);
-
-  const serverEnded = hasWaveEnded(wave);
-
-  // This card's own clock reaching the 60-minute mark, independent of any
-  // network round-trip - see the matching comment in ScanScreen.tsx for
-  // why this can't just wait for a Realtime update.
-  const [locallyTimedOut, setLocallyTimedOut] = useState(false);
-  useEffect(() => {
-    setLocallyTimedOut(false);
-  }, [wave?.actual_start]);
-
-  const ended = serverEnded || locallyTimedOut;
 
   const wasEndedRef = useRef(ended);
   useEffect(() => {
-    if (ended && !wasEndedRef.current) {
-      playHeatEndAlert();
-    }
+    if (ended && !wasEndedRef.current) playHeatEndAlert();
     wasEndedRef.current = ended;
   }, [ended]);
-
-  useEffect(() => {
-    if (!started || ended || team.wave == null) return;
-    const check = () => {
-      const elapsed = Date.now() - new Date(startTime).getTime();
-      if (elapsed >= 60 * 60 * 1000) {
-        setLocallyTimedOut(true);
-        fetch(`/api/waves/${team.wave}/auto-close`, { method: "POST" }).catch(() => {});
-      }
-    };
-    check();
-    const interval = setInterval(check, 5000);
-    return () => clearInterval(interval);
-  }, [started, ended, startTime, team.wave]);
-
-  useEffect(() => {
-    if (team.wave == null) return;
-    const channel = supabase
-      .channel(`wave-${team.wave}-card-${team.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "waves", filter: `wave_number=eq.${team.wave}` },
-        (payload) => setWave(payload.new as Wave)
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [supabase, team.wave]);
-
-  useEffect(() => {
-    if (team.wave == null || hasWaveEnded(wave)) return;
-    const poll = setInterval(async () => {
-      const { data } = await supabase
-        .from("waves")
-        .select("wave_number, scheduled_start, actual_start, actual_end")
-        .eq("wave_number", team.wave)
-        .maybeSingle();
-      if (data) setWave(data as Wave);
-    }, 3000);
-    return () => clearInterval(poll);
-  }, [supabase, team.wave, wave]);
-
-  const refreshFromServer = useCallback(async () => {
-    const { data } = await supabase
-      .from("scans")
-      .select("id, station_number, event_type, scanned_at")
-      .eq("team_id", team.id)
-      .order("scanned_at", { ascending: true });
-    if (data) setScans(data);
-  }, [supabase, team.id]);
-
-  const refreshPendingCount = useCallback(() => {
-    setPendingCount(readQueue(team.id).length);
-  }, [team.id]);
-
-  const flushQueue = useCallback(async () => {
-    const list = readQueue(team.id);
-    if (list.length === 0) return;
-    const remaining: PendingScan[] = [];
-    let permanentlyFailed = 0;
-    for (const item of list) {
-      const { error } = await supabase.from("scans").insert(toScanInsert(item));
-      if (error) {
-        if (error.code === "23505") continue;
-        if (error.code === "P0001") {
-          permanentlyFailed++;
-          continue;
-        }
-        remaining.push(item);
-      }
-    }
-    writeQueue(team.id, remaining);
-    refreshPendingCount();
-    if (permanentlyFailed > 0) {
-      setMessage(
-        `${permanentlyFailed} scan${permanentlyFailed > 1 ? "s" : ""} couldn't be saved - tell the organizer.`
-      );
-    }
-    if (remaining.length < list.length) await refreshFromServer();
-  }, [supabase, team.id, refreshPendingCount, refreshFromServer]);
-
-  useEffect(() => {
-    refreshPendingCount();
-    const queued = readQueue(team.id);
-    if (queued.length > 0) {
-      setScans((prev) => {
-        const existingIds = new Set(prev.map((s) => (s as any).client_scan_id));
-        const toAdd = queued
-          .filter((q) => !existingIds.has(q.client_scan_id))
-          .map((q, i) => ({
-            id: -Date.now() - i,
-            client_scan_id: q.client_scan_id,
-            station_number: q.station_number,
-            event_type: q.event_type,
-            scanned_at: q.queued_at,
-          }));
-        return [...prev, ...toAdd].sort(
-          (a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime()
-        );
-      });
-    }
-    window.addEventListener("online", flushQueue);
-    const interval = setInterval(flushQueue, 15000);
-    return () => {
-      window.removeEventListener("online", flushQueue);
-      clearInterval(interval);
-    };
-  }, [flushQueue, refreshPendingCount, team.id]);
-
-  async function doRecordScan(stationNumber: number, eventType: "arrive" | "leave") {
-    const payload: PendingScan = {
-      client_scan_id: newScanId(),
-      team_id: team.id,
-      station_number: stationNumber,
-      event_type: eventType,
-      judge_id: judgeId,
-      queued_at: new Date().toISOString(),
-    };
-
-    // Shown immediately on tap, before the network round-trip - see the
-    // matching comment in ScanScreen.tsx for the full reasoning.
-    const optimisticId = -Date.now();
-    setScans((prev) => [
-      ...prev,
-      { id: optimisticId, station_number: stationNumber, event_type: eventType, scanned_at: payload.queued_at },
-    ]);
-
-    const { data, error } = await supabase
-      .from("scans")
-      .insert(toScanInsert(payload))
-      .select("id, station_number, event_type, scanned_at")
-      .single();
-
-    if (error) {
-      if (error.message?.includes("INVALID_SCAN")) {
-        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
-        setMessage("Doesn't match this team's next step. Refreshing...");
-        await refreshFromServer();
-        return;
-      }
-      if (error.code === "P0001") {
-        setScans((prev) => prev.filter((s) => s.id !== optimisticId));
-        setMessage(`Couldn't save: ${error.message}. Tell the organizer.`);
-        return;
-      }
-      const list = readQueue(team.id);
-      list.push(payload);
-      writeQueue(team.id, list);
-      refreshPendingCount();
-      setMessage("Saved offline - will sync once you're back online.");
-      return;
-    }
-
-    setScans((prev) => prev.map((s) => (s.id === optimisticId ? data : s)));
-    setMessage(`✓ ${eventType === "arrive" ? "Arrival" : "Departure"} recorded.`);
-  }
-
-  async function confirm() {
-    if (submitting || next.isFinished) return;
-    setSubmitting(true);
-    setMessage(null);
-    await doRecordScan(next.stationNumber, next.eventType);
-    setSubmitting(false);
-  }
 
   async function submitPenalty(e: React.FormEvent) {
     e.preventDefault();
@@ -305,10 +74,10 @@ export default function TeamCard({
       station_number: next.stationNumber,
       penalty_seconds: seconds,
       judge_id: judgeId,
-      notes: penaltyNote || null,
+      notes: penaltyNote.trim().slice(0, 200) || null,
     });
     if (error) {
-      setPenaltyStatus("Couldn't save - check your connection.");
+      setPenaltyStatus(friendlyDbError(error.code, "Couldn't save - check your connection."));
       return;
     }
     setPenaltySeconds("");
@@ -316,49 +85,49 @@ export default function TeamCard({
     setPenaltyStatus("Penalty logged.");
   }
 
+  const buttonLabel = next.finishesHere
+    ? "Done · FINISH"
+    : next.eventType === "arrive"
+    ? `Arrived · Stn ${next.displayNumber}`
+    : `Left · Stn ${next.displayNumber}`;
+
   return (
     <div className="rounded-md border border-fofGunmetal p-4">
       <Link href={`/judge/${team.id}`} className="block">
-        <p className="font-display text-lg">{team.team_name}</p>
+        <p className="font-display text-lg">
+          {team.team_name} <span className="nums text-xs text-fofGunmetal">{team.id}</span>
+        </p>
         <p className="text-sm text-fofGunmetal">
           {team.athlete_1}
           {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
         </p>
       </Link>
 
-      {!started ? (
-        <p className="mt-2 text-sm text-fofGunmetal">
-          Waiting for Heat {team.wave} to start
-        </p>
-      ) : ended ? (
+      {team.wave == null ? (
+        <p className="mt-2 text-sm text-fofGunmetal">No heat yet</p>
+      ) : !started ? (
+        <p className="mt-2 text-sm text-fofGunmetal">Waiting for Heat {team.wave} to start</p>
+      ) : ended && !next.isFinished ? (
         <>
-          <p className="mt-1 text-sm text-fofGunmetal">
-            Heat {team.wave} has ended
-            {!next.isFinished ? " - team stopped where they were" : ""}
-          </p>
-          {!next.isFinished && (
-            <Link
-              href={`/judge/${team.id}`}
-              className="mt-2 inline-block text-xs text-fofRed underline"
-            >
-              Add a note on where they stopped &rarr;
-            </Link>
-          )}
+          <p className="mt-1 text-sm text-fofGunmetal">Heat {team.wave} has ended - team stopped where they were</p>
+          <Link href={`/judge/${team.id}`} className="mt-2 inline-block text-xs text-fofRed underline">
+            Add a note on where they stopped &rarr;
+          </Link>
         </>
       ) : (
         <>
           <p className={`mt-1 text-sm ${next.runName ? "text-blue-400" : "text-fofRed"}`}>
             {next.isFinished
-              ? "Finished"
+              ? "✓ Finished"
               : next.runName
-              ? `🏃 Running - ${next.runName}`
-              : `Next: ${next.label}`}
+              ? `Running - ${next.runName}`
+              : `At station ${next.displayNumber}: ${next.stationName}`}
           </p>
 
           {pendingCount > 0 && (
             <div className="mt-1 flex items-center justify-between gap-2 text-xs text-fofPaper">
-              <span>{pendingCount} waiting to sync</span>
-              <button onClick={flushQueue} className="rounded border border-fofPaper px-2 py-0.5">
+              <span>{pendingCount} waiting to send</span>
+              <button onClick={() => flush()} className="rounded border border-fofPaper px-2 py-0.5">
                 Retry now
               </button>
             </div>
@@ -367,11 +136,13 @@ export default function TeamCard({
           {!next.isFinished && (
             <div className="mt-3 flex gap-2">
               <button
-                onClick={confirm}
-                disabled={submitting}
-                className="tap-target flex-1 rounded-md btn-stamped font-display disabled:opacity-50"
+                onClick={() => record(next)}
+                disabled={busy}
+                className={`tap-target flex-1 rounded-md font-display disabled:opacity-60 ${
+                  next.finishesHere ? "btn-finish" : "btn-stamped"
+                }`}
               >
-                {submitting ? "..." : "Confirm"}
+                {buttonLabel}
               </button>
               <button
                 onClick={() => setPenaltyOpen((v) => !v)}
@@ -384,23 +155,24 @@ export default function TeamCard({
 
           {message && (
             <p
+              aria-live="polite"
               className={`mt-2 text-sm ${
-                message.startsWith("✓") || message.startsWith("Saved offline")
-                  ? "text-green-500"
-                  : "text-fofRed"
+                message.startsWith("✓") || message.startsWith("Saved on this phone") ? "text-green-500" : "text-fofRed"
               }`}
             >
               {message}
             </p>
           )}
 
-          {penaltyOpen && (
+          {penaltyOpen && !next.isFinished && (
             <form onSubmit={submitPenalty} className="mt-3 flex flex-col gap-2">
               <div className="flex gap-2">
                 <input
                   type="number"
                   inputMode="numeric"
+                  min={1}
                   placeholder="Seconds"
+                  aria-label="Penalty seconds"
                   value={penaltySeconds}
                   onChange={(e) => setPenaltySeconds(e.target.value)}
                   className="tap-target w-24 rounded-md border border-fofGunmetal bg-transparent px-3"
@@ -408,15 +180,14 @@ export default function TeamCard({
                 <input
                   type="text"
                   placeholder="Reason (optional)"
+                  aria-label="Penalty reason"
+                  maxLength={200}
                   value={penaltyNote}
                   onChange={(e) => setPenaltyNote(e.target.value)}
                   className="tap-target flex-1 rounded-md border border-fofGunmetal bg-transparent px-3"
                 />
               </div>
-              <button
-                type="submit"
-                className="tap-target rounded-md border border-fofGunmetal font-display text-sm"
-              >
+              <button type="submit" className="tap-target rounded-md border border-fofGunmetal font-display text-sm">
                 Log penalty
               </button>
               {penaltyStatus && <p className="text-xs text-fofGunmetal">{penaltyStatus}</p>}
