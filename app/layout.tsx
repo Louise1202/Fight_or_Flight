@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Staatliches, Barlow_Semi_Condensed, IBM_Plex_Mono, Permanent_Marker } from "next/font/google";
 import "./globals.css";
+import { getActiveEvent } from "@/lib/activeEvent";
 
 // Staatliches: condensed poster caps with slightly cut, irregular terminals -
 // the calm sibling of the hand-scratched lettering on the patch. Caps only.
@@ -55,17 +56,24 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // The page background behind every screen follows the current event's
+  // colours (Survivor blue), so no Fight or Flight red shows at the edges.
+  // Each page still sets its own event's brand on its <main>.
+  const event = await getActiveEvent().catch(() => null);
   return (
     <html
       lang="en"
       className={`${staatliches.variable} ${barlow.variable} ${plexMono.variable} ${permanentMarker.variable}`}
     >
-      <body className="ground min-h-screen bg-fofBlack text-fofPaper font-body antialiased pt-[env(safe-area-inset-top)]">
+      <body
+        data-brand={event?.theme ?? "fof"}
+        className="ground min-h-screen bg-fofBlack text-fofPaper font-body antialiased pt-[env(safe-area-inset-top)]"
+      >
         {children}
       </body>
     </html>
