@@ -6,7 +6,7 @@ export default function BuiltBy({ onLight = false, className = "" }: { onLight?:
       <img
         src={onLight ? "/brand/datavera-light.png" : "/brand/datavera-on-dark.png"}
         alt="by Datavera Analytics"
-        className="h-6 w-auto opacity-80"
+        className="h-12 w-auto max-w-full opacity-90"
       />
     </div>
   );
