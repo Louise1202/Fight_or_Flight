@@ -26,9 +26,14 @@ type MemberRow = {
   emergency_phone: string;
   emergency_relationship: string | null;
 };
-type MedicalRow = { member_id: number; answers: Record<string, string> | null; details: string | null };
+type MedicalRow = {
+  member_id: number;
+  answers: Record<string, string> | null;
+  details: string | null;
+  extra: { notes?: Record<string, string>; medical_aid?: { has?: boolean; provider?: string; number?: string } } | null;
+};
 
-type Flagged = MemberRow & { team: TeamRow; flags: { label: string; answer: string }[]; details: string };
+type Flagged = MemberRow & { team: TeamRow; flags: { label: string; answer: string }[]; details: string; notes: string[]; aid: string };
 
 const PRINTED = new Intl.DateTimeFormat("en-ZA", {
   timeZone: "Africa/Johannesburg",
@@ -75,7 +80,7 @@ export default async function MedicSheetPage() {
     const rows = await fetchAll<MedicalRow>((from, to) =>
       admin
         .from("member_medical")
-        .select("member_id, answers, details")
+        .select("member_id, answers, details, extra")
         .in("member_id", ids)
         .order("member_id", { ascending: true })
         .range(from, to)
@@ -104,10 +109,13 @@ export default async function MedicSheetPage() {
       .sort(([a], [b]) => order(a) - order(b))
       .map(([k, a]) => ({ label: labelOf(k), answer: a === "yes" ? "Yes" : "Unknown" }));
     const details = (med.details ?? "").trim();
-    if (flags.length === 0 && !details) continue;
+    const notes = Object.values(med.extra?.notes ?? {}).map((n) => n.trim()).filter(Boolean);
+    if (flags.length === 0 && !details && notes.length === 0) continue;
     const team = teamById.get(m.team_id);
     if (!team) continue;
-    flagged.push({ ...m, team, flags, details });
+    const a = med.extra?.medical_aid;
+    const aid = a?.has ? [a.provider, a.number].filter(Boolean).join(" · ") || "Yes" : a?.has === false ? "None" : "";
+    flagged.push({ ...m, team, flags, details, notes, aid });
   }
 
   // Group by heat; "No heat yet" last.
@@ -202,7 +210,13 @@ export default async function MedicSheetPage() {
                           ))}
                         </ul>
                       )}
+                      {f.notes.map((n, k) => (
+                        <p key={k} className="mt-1 whitespace-pre-line italic">
+                          “{n}”
+                        </p>
+                      ))}
                       {f.details && <p className="mt-1 whitespace-pre-line italic">“{f.details}”</p>}
+                      {f.aid && <p className="mt-1 text-xs">Medical aid: {f.aid}</p>}
                     </td>
                     <td className="py-2">
                       {f.emergency_name}

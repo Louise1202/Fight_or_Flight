@@ -1366,10 +1366,47 @@ function RegistrationsTab({
     patch(team, { status: "withdrawn" });
   }
 
+  /** Back in after a withdrawal: confirmed only if everyone has signed. */
+  function reinstate(team: RegTeam) {
+    const allSigned = team.members.length > 0 && countOf(team.signed) >= team.members.length;
+    patch(team, { status: allSigned ? "confirmed" : "registered" });
+  }
+
+  function waitingToSign(t: RegTeam): boolean {
+    return t.status === "registered" && t.members.length > 0 && countOf(t.signed) < t.members.length;
+  }
+
+  function statusLabel(t: RegTeam): string {
+    if (t.status === "withdrawn") return "Withdrawn";
+    if (t.status === "confirmed") return "Confirmed";
+    return waitingToSign(t) ? `Booked · signed ${countOf(t.signed)}/${t.members.length}` : "Booked";
+  }
+
+  // Email the partner their sign link again; the link is also shown so it can be sent on WhatsApp.
+  const [linkInfo, setLinkInfo] = useState<{ teamId: string; text: string; link: string | null } | null>(null);
+  async function resendLink(team: RegTeam) {
+    setBusyId(team.id);
+    setRowError(null);
+    const r = await callApi("/api/admin/registrations/partner-link", "POST", { teamId: team.id });
+    setBusyId(null);
+    if (!r.ok) {
+      setRowError(`${team.id}: ${errorOf(r, "couldn't send the link")}`);
+      return;
+    }
+    const partner = team.members.find((m) => m.position === 2)?.first_name ?? "The partner";
+    setLinkInfo({
+      teamId: team.id,
+      text: r.data?.sent ? `Link emailed to ${partner} again.` : `Couldn't email ${partner} - send them the link yourself:`,
+      link: typeof r.data?.link === "string" ? r.data.link : null,
+    });
+  }
+
   const teams = list ?? [];
   const live = teams.filter((t) => t.status !== "withdrawn");
   const chips = [
     { label: "Registered", value: live.length },
+    { label: "Booked, waiting to sign", value: live.filter((t) => waitingToSign(t)).length, alert: true },
+    { label: "Confirmed", value: live.filter((t) => t.status === "confirmed").length },
     { label: "Men", value: live.filter((t) => t.division === "Men").length },
     { label: "Women", value: live.filter((t) => t.division === "Women").length },
     { label: "Mixed", value: live.filter((t) => t.division === "Mixed").length },
@@ -1454,6 +1491,17 @@ function RegistrationsTab({
       {loadError && <p className="mb-2 text-sm text-fofRed">{loadError}</p>}
       {rowError && <p className="mb-2 text-sm text-fofRed">{rowError}</p>}
       {emailRowError && <p className="mb-2 text-sm text-fofRed">{emailRowError}</p>}
+      {linkInfo && (
+        <div role="status" className="mb-2 rounded border border-fofRule p-3 text-sm">
+          <p>
+            <span className="font-mono">{linkInfo.teamId}</span>: {linkInfo.text}
+          </p>
+          {linkInfo.link && <p className="mt-1 break-all font-mono text-xs text-fofGunmetal">{linkInfo.link}</p>}
+          <button onClick={() => setLinkInfo(null)} className="mt-1 text-xs underline">
+            Close
+          </button>
+        </div>
+      )}
 
       {list === null && !loadError && <p className="text-sm text-fofGunmetal">Loading...</p>}
       {list !== null && teams.length === 0 && <p className="text-sm text-fofGunmetal">No teams have signed up yet.</p>}
@@ -1477,7 +1525,7 @@ function RegistrationsTab({
                     <p className="font-display text-lg leading-tight">{t.team_name}</p>
                     <p className="text-xs text-fofGunmetal">
                       <span className="font-mono">{t.id}</span> · {t.division ?? "—"} ·{" "}
-                      <span className="capitalize">{t.status}</span>
+                      <span className={waitingToSign(t) ? "text-fofRed" : "capitalize"}>{statusLabel(t)}</span>
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
@@ -1538,7 +1586,16 @@ function RegistrationsTab({
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  {!readOnly && t.status === "registered" && (
+                  {!readOnly && waitingToSign(t) && (
+                    <button
+                      onClick={() => resendLink(t)}
+                      disabled={busy}
+                      className="tap-target rounded border border-fofRed px-3 text-fofRed disabled:opacity-50"
+                    >
+                      Resend link to {members.find((m) => m.position === 2)?.first_name ?? "partner"}
+                    </button>
+                  )}
+                  {!readOnly && t.status === "registered" && !waitingToSign(t) && (
                     <button
                       onClick={() => patch(t, { status: "confirmed" })}
                       disabled={busy}
@@ -1558,7 +1615,7 @@ function RegistrationsTab({
                   )}
                   {!readOnly && withdrawn && (
                     <button
-                      onClick={() => patch(t, { status: "registered" })}
+                      onClick={() => reinstate(t)}
                       disabled={busy}
                       className="tap-target rounded border border-fofGunmetal px-3 disabled:opacity-50"
                     >
@@ -1687,10 +1744,19 @@ function RegistrationsTab({
                       <PaymentControls t={t} busy={busy} />
                     </td>
                     <td className="p-2">
-                      <span className="block text-xs capitalize text-fofGunmetal">{t.status}</span>
+                      <span className={`block text-xs ${waitingToSign(t) ? "text-fofRed" : "text-fofGunmetal"}`}>{statusLabel(t)}</span>
                       {!readOnly && (
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {t.status === "registered" && (
+                          {waitingToSign(t) && (
+                            <button
+                              onClick={() => resendLink(t)}
+                              disabled={busy}
+                              className="rounded border border-fofRed px-2 py-1 text-xs text-fofRed disabled:opacity-50"
+                            >
+                              Resend link
+                            </button>
+                          )}
+                          {t.status === "registered" && !waitingToSign(t) && (
                             <button
                               onClick={() => patch(t, { status: "confirmed" })}
                               disabled={busy}
@@ -1710,7 +1776,7 @@ function RegistrationsTab({
                           )}
                           {withdrawn && (
                             <button
-                              onClick={() => patch(t, { status: "registered" })}
+                              onClick={() => reinstate(t)}
                               disabled={busy}
                               className="rounded border border-fofGunmetal px-2 py-1 text-xs disabled:opacity-50"
                             >

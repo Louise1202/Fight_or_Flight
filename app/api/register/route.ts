@@ -6,32 +6,25 @@ import { callerKey, allowRequest } from "@/lib/rateLimit";
 import { usernameToEmail } from "@/lib/username";
 import { passToken } from "@/lib/islandPass";
 import { sendRegisteredEmail } from "@/lib/registeredEmail";
+import { sendPartnerInvite, sendSpotBooked } from "@/lib/partnerEmail";
+import { signToken } from "@/lib/partnerLink";
+import { isObject, validateBasic, validateSigned, type BasicMember, type SignedAnswers } from "@/lib/registerMember";
 import {
-  CONSENT_SECTIONS,
-  FINAL_DECLARATION,
-  MEDICAL_ANSWERS,
-  MEDICAL_QUESTIONS,
-  WORDING_VERSION,
-  type MedicalAnswer,
-} from "@/lib/legal/survivor";
-import {
-  DETAILS_MAX,
   PASSWORD_MAX,
   PASSWORD_MIN,
-  cleanEmail,
-  cleanPersonName,
-  cleanRelationship,
   cleanTeamName,
   isReservedTeamName,
-  isSignaturePng,
-  normalisePhone,
   teamNameKey,
 } from "@/components/register/rules";
 
 // Public team self-registration. Everything is checked here by hand
 // before anything is written; the database function register_team()
-// then creates the team, both athletes and their medical answers in one
+// then creates the team, both athletes and their answers in one
 // transaction. Nothing personal is ever logged or echoed in an error.
+//
+// partner_signs_later: athlete 1 gives only athlete 2's name, phone and
+// email. The spot is booked; athlete 2 gets an email link to sign, and
+// the team is confirmed when they do (app/api/register/sign).
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -47,94 +40,9 @@ function bad(error: string, field?: string, status = 400) {
   });
 }
 
-type CleanMember = {
-  position: 1 | 2;
-  first_name: string;
-  surname: string;
-  gender: "male" | "female";
-  phone: string;
-  email: string;
-  emergency_name: string;
-  emergency_phone: string;
-  emergency_relationship: string;
-  consents: { version: string; accepted: Record<string, true>; accepted_at: string };
-  signature_png: string;
-  medical: Record<string, MedicalAnswer>;
-  medical_details: string;
-};
+type DbMember = BasicMember & (Partial<SignedAnswers> & { pending?: true });
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Returns the cleaned member, or a short reason (never containing the data itself). */
-function validateMember(raw: unknown, position: 1 | 2, gender: "male" | "female", acceptedAt: string): CleanMember | string {
-  const who = `Athlete ${position}`;
-  if (!isObject(raw)) return `${who}: details are missing.`;
-
-  const first_name = cleanPersonName(raw.first_name);
-  if (!first_name) return `${who}: check the first name.`;
-  const surname = cleanPersonName(raw.surname);
-  if (!surname) return `${who}: check the surname.`;
-  if (raw.gender !== gender) return `${who}: the gender doesn't match the team type.`;
-  const phone = normalisePhone(raw.phone);
-  if (!phone) return `${who}: enter a valid South African phone number.`;
-  const email = cleanEmail(raw.email);
-  if (!email) return `${who}: enter a valid email address.`;
-  const emergency_name = cleanPersonName(raw.emergency_name);
-  if (!emergency_name) return `${who}: check the emergency contact's name.`;
-  const emergency_phone = normalisePhone(raw.emergency_phone);
-  if (!emergency_phone) return `${who}: enter a valid emergency contact phone number.`;
-  const emergency_relationship = cleanRelationship(raw.emergency_relationship);
-  if (emergency_relationship === null) return `${who}: check the emergency contact's relationship.`;
-
-  // Medical: every question answered no / yes / unknown, nothing extra.
-  if (!isObject(raw.medical)) return `${who}: answer every medical question.`;
-  const medical: Record<string, MedicalAnswer> = {};
-  for (const q of MEDICAL_QUESTIONS) {
-    const a = raw.medical[q.key];
-    if (typeof a !== "string" || !(MEDICAL_ANSWERS as readonly string[]).includes(a)) {
-      return `${who}: answer every medical question.`;
-    }
-    medical[q.key] = a as MedicalAnswer;
-  }
-  const detailsRaw = raw.medical_details ?? "";
-  if (typeof detailsRaw !== "string") return `${who}: check the medical details.`;
-  const medical_details = detailsRaw.trim();
-  if (medical_details.length > DETAILS_MAX) return `${who}: medical details can be at most ${DETAILS_MAX} characters.`;
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(medical_details)) return `${who}: check the medical details.`;
-  if (Object.values(medical).includes("yes") && medical_details.length === 0) {
-    return `${who}: please add details for the medical questions answered Yes.`;
-  }
-
-  // Consents: every section and every declaration item ticked.
-  if (!isObject(raw.consents)) return `${who}: every consent and declaration must be ticked.`;
-  const accepted: Record<string, true> = {};
-  for (const key of [...CONSENT_SECTIONS.map((s) => s.key), ...FINAL_DECLARATION.map((d) => d.key)]) {
-    if (raw.consents[key] !== true) return `${who}: every consent and declaration must be ticked.`;
-    accepted[key] = true;
-  }
-
-  if (!isSignaturePng(raw.signature_png)) return `${who}: please sign again.`;
-
-  return {
-    position,
-    first_name,
-    surname,
-    gender,
-    phone,
-    email,
-    emergency_name,
-    emergency_phone,
-    emergency_relationship,
-    consents: { version: WORDING_VERSION, accepted, accepted_at: acceptedAt },
-    signature_png: raw.signature_png,
-    medical,
-    medical_details,
-  };
-}
-
-// The pass picture and the email can take a few seconds.
+// The pass picture and the emails can take a few seconds.
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
@@ -178,13 +86,24 @@ export async function POST(req: NextRequest) {
     return bad(`The team password must be ${PASSWORD_MIN} to ${PASSWORD_MAX} characters.`, "password");
   }
 
+  const partnerLater = body.partner_signs_later === true;
   if (!Array.isArray(body.members) || body.members.length !== 2) return bad(GENERIC_400);
   const acceptedAt = new Date().toISOString();
-  const members: CleanMember[] = [];
+  const members: DbMember[] = [];
   for (const position of [1, 2] as const) {
-    const m = validateMember(body.members[position - 1], position, type.genders[position - 1], acceptedAt);
-    if (typeof m === "string") return bad(m, `member${position}`);
-    members.push(m);
+    const raw = body.members[position - 1];
+    const basic = validateBasic(raw, position, type.genders[position - 1]);
+    if (typeof basic === "string") return bad(basic, `member${position}`);
+    if (position === 2 && partnerLater) {
+      members.push({ ...basic, pending: true });
+      continue;
+    }
+    const signed = validateSigned(raw, position, acceptedAt);
+    if (typeof signed === "string") return bad(signed, `member${position}`);
+    members.push({ ...basic, ...signed });
+  }
+  if (members[0].email === members[1].email) {
+    return bad("Each athlete needs their own email address.", "member2");
   }
 
   // 4. Rate limit (after validation, so fixing a typo doesn't use up a try).
@@ -216,7 +135,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 7. Create the team, both athletes and their medical answers in one go.
+  // 7. Create the team, both athletes and their answers in one go.
   const { data: teamId, error } = await admin.rpc("register_team", {
     p_event_id: event.id,
     p_team: { team_name: teamName, division: type.division },
@@ -260,21 +179,43 @@ export async function POST(req: NextRequest) {
     console.error("register: team login not created", "exception");
   }
 
-  // 9. "You're registered" email with the Island Pass. Never blocks or
-  // fails the sign-up: at most ~8 seconds, then the screen shows anyway.
+  // 9. Emails. Never block or fail the sign-up: at most ~8 seconds.
+  //    Both signed: "You're registered" with the Island Pass to both.
+  //    Partner signs later: the sign link to athlete 2, "Spot booked" to athlete 1.
   const finalName = teamName || `Team ${teamId}`;
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000));
   let emailed = false;
   try {
-    emailed = await Promise.race([
-      sendRegisteredEmail({ event, teamId, teamName: finalName, division: type.division, members }),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
-    ]);
+    if (partnerLater) {
+      const input = { event, teamId, teamName: finalName, booker: members[0], partner: members[1] };
+      const [invite] = await Promise.race([
+        Promise.all([sendPartnerInvite(input), sendSpotBooked(input)]),
+        timeout.then(() => [false, false] as const),
+      ]);
+      emailed = invite;
+    } else {
+      emailed = await Promise.race([
+        sendRegisteredEmail({ event, teamId, teamName: finalName, division: type.division, members }),
+        timeout,
+      ]);
+    }
   } catch {
     emailed = false;
   }
 
   return NextResponse.json(
-    { ok: true, teamId, username, loginCreated, teamName: finalName, passToken: passToken(teamId), emailed },
+    {
+      ok: true,
+      teamId,
+      username,
+      loginCreated,
+      teamName: finalName,
+      emailed,
+      // Booked only: no Island Pass yet, but athlete 1 can share the link.
+      status: partnerLater ? "booked" : "confirmed",
+      passToken: partnerLater ? null : passToken(teamId),
+      signToken: partnerLater ? signToken(teamId) : null,
+    },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

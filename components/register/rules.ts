@@ -88,6 +88,46 @@ export function passwordProblem(pw: string): string | null {
   return null;
 }
 
+export const ID_MAX = 20;
+export const ADDRESS_MAX = 300;
+export const SHORT_MAX = 80;
+
+const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f<>]/;
+
+/** SA ID (13 digits) or a passport number: letters and digits, 6-20. */
+export function cleanIdNumber(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.replace(/[\s-]/g, "").toUpperCase();
+  return /^[A-Z0-9]{6,20}$/.test(s) ? s : null;
+}
+
+/** Free text such as an address or a medical aid name. "" when blank. */
+export function cleanText(v: unknown, max: number): string | null {
+  if (v === undefined || v === null) return "";
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s.length > max || CONTROL_RE.test(s)) return null;
+  return s;
+}
+
+/** Date of birth as YYYY-MM-DD, aged 10 to 100. */
+export function cleanDateOfBirth(v: unknown, today = new Date()): string | null {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) return null;
+  const age = (today.getTime() - d.getTime()) / (365.25 * 86_400_000);
+  return age >= 10 && age <= 100 ? v : null;
+}
+
+/** Any phone number: a South African one, or +country code and 7-15 digits. */
+export function normaliseAnyPhone(v: unknown): string | null {
+  const sa = normalisePhone(v);
+  if (sa) return sa;
+  if (typeof v !== "string") return null;
+  const s = v.replace(/[\s\-().]/g, "");
+  return /^\+\d{7,15}$/.test(s) ? s : null;
+}
+
 export function isSignaturePng(v: unknown): v is string {
   if (typeof v !== "string") return false;
   if (!v.startsWith("data:image/png;base64,")) return false;
