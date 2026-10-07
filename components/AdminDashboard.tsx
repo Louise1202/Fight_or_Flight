@@ -1217,9 +1217,28 @@ function RegistrationsTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
+  const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null);
+  const [emailRowError, setEmailRowError] = useState<string | null>(null);
+  const [resendingKey, setResendingKey] = useState<string | null>(null);
+
+  async function loadEmailStatus() {
+    const r = await callApi("/api/admin/results-emails", "GET");
+    if (r.ok) setEmailStatus(r.data as EmailStatus);
+  }
+
+  async function resend(teamId: string, kind: "heat" | "final") {
+    setResendingKey(`${teamId}:${kind}`);
+    setEmailRowError(null);
+    const r = await callApi("/api/admin/results-emails", "POST", { teamId, kind, resend: true });
+    setResendingKey(null);
+    if (!r.ok) setEmailRowError(`${teamId}: ${errorOf(r, "couldn't send the email")}`);
+    loadEmailStatus();
+  }
+
   async function load() {
     setLoading(true);
     setLoadError(null);
+    loadEmailStatus();
     const r = await callApi("/api/admin/registrations", "GET");
     setLoading(false);
     if (!r.ok) {
@@ -1318,15 +1337,24 @@ function RegistrationsTab({
         </a>
       </div>
 
+      <ResultsEmailsBox
+        event={event}
+        readOnly={readOnly}
+        teams={live}
+        status={emailStatus}
+        onChanged={loadEmailStatus}
+      />
+
       {loadError && <p className="mb-2 text-sm text-fofRed">{loadError}</p>}
       {rowError && <p className="mb-2 text-sm text-fofRed">{rowError}</p>}
+      {emailRowError && <p className="mb-2 text-sm text-fofRed">{emailRowError}</p>}
 
       {list === null && !loadError && <p className="text-sm text-fofGunmetal">Loading...</p>}
       {list !== null && teams.length === 0 && <p className="text-sm text-fofGunmetal">No teams have signed up yet.</p>}
 
       {teams.length > 0 && (
         <div className="overflow-x-auto rounded border border-fofCharcoal">
-          <table className="w-full min-w-[1100px] border-collapse text-sm">
+          <table className="w-full min-w-[1240px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-fofGunmetal text-left text-fofGunmetal">
                 <th className="p-2">Team ID</th>
@@ -1338,6 +1366,7 @@ function RegistrationsTab({
                 <th className="p-2">Signed</th>
                 <th className="p-2">Paid</th>
                 <th className="p-2">Status</th>
+                <th className="p-2">Results email</th>
                 <th className="p-2"></th>
               </tr>
             </thead>
@@ -1468,6 +1497,14 @@ function RegistrationsTab({
                         </div>
                       )}
                     </td>
+                    <td className="p-2 text-xs">
+                      <ResultsEmailCell
+                        team={t}
+                        status={emailStatus}
+                        busyKey={resendingKey}
+                        onResend={resend}
+                      />
+                    </td>
                     <td className="p-2">
                       <a
                         href={`/admin/registrations/${encodeURIComponent(t.id)}`}
@@ -1483,7 +1520,7 @@ function RegistrationsTab({
               })}
               {shown.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-3 text-sm text-fofGunmetal">
+                  <td colSpan={11} className="p-3 text-sm text-fofGunmetal">
                     Nothing matches &quot;{search}&quot;.
                   </td>
                 </tr>
@@ -1493,6 +1530,269 @@ function RegistrationsTab({
         </div>
       )}
     </section>
+  );
+}
+
+// =====================================================================
+// Results emails (inside Registrations)
+// =====================================================================
+
+type EmailRecord = {
+  status: "sent" | "failed" | "skipped";
+  recipients: number;
+  error: string | null;
+  sent_at: string;
+};
+
+type EmailStatus = {
+  configured: boolean;
+  migrated: boolean;
+  settings: { email_results_auto: boolean; email_final_auto: boolean } | null;
+  locked?: boolean;
+  teams: Record<string, { heat?: EmailRecord; final?: EmailRecord }>;
+  waves: { wave_number: number; started: boolean; ended: boolean }[];
+};
+
+function EmailRecordLine({
+  label,
+  rec,
+  busy,
+  onResend,
+}: {
+  label: string;
+  rec: EmailRecord;
+  busy: boolean;
+  onResend: () => void;
+}) {
+  if (rec.status === "sent") {
+    return (
+      <span className="block">
+        {label}Sent {sast(rec.sent_at, SAST_HM)} · {rec.recipients} athlete{rec.recipients === 1 ? "" : "s"}
+      </span>
+    );
+  }
+  if (rec.status === "skipped") {
+    return <span className="block text-fofGunmetal">{label}Skipped (no email)</span>;
+  }
+  if (rec.error === "sending") {
+    return <span className="block text-fofGunmetal">{label}Sending...</span>;
+  }
+  return (
+    <span className="block text-fofRed">
+      {label}Failed{" "}
+      <button onClick={onResend} disabled={busy} className="ml-1 rounded border border-fofRed px-2 py-0.5 disabled:opacity-50">
+        {busy ? "Sending..." : "Send again"}
+      </button>
+    </span>
+  );
+}
+
+function ResultsEmailCell({
+  team,
+  status,
+  busyKey,
+  onResend,
+}: {
+  team: RegTeam;
+  status: EmailStatus | null;
+  busyKey: string | null;
+  onResend: (teamId: string, kind: "heat" | "final") => void;
+}) {
+  if (!status || !status.migrated) return <span className="text-fofGunmetal">—</span>;
+  if (team.status === "withdrawn") return <span className="text-fofGunmetal">Not sent (withdrawn)</span>;
+  const rec = status.teams[team.id] ?? {};
+  const wave = team.wave != null ? status.waves.find((w) => w.wave_number === team.wave) : undefined;
+
+  let heatLine: React.ReactNode;
+  if (rec.heat) {
+    heatLine = (
+      <EmailRecordLine
+        label=""
+        rec={rec.heat}
+        busy={busyKey === `${team.id}:heat`}
+        onResend={() => onResend(team.id, "heat")}
+      />
+    );
+  } else if (team.wave == null) {
+    heatLine = <span className="block text-fofGunmetal">No heat yet</span>;
+  } else if (!wave?.ended) {
+    heatLine = <span className="block text-fofGunmetal">Waiting for heat {team.wave}</span>;
+  } else if (!status.configured) {
+    heatLine = <span className="block text-fofGunmetal">Not sent (email not connected)</span>;
+  } else if (status.locked) {
+    heatLine = <span className="block text-fofGunmetal">Covered by the final email</span>;
+  } else if (status.settings && !status.settings.email_results_auto) {
+    heatLine = <span className="block text-fofGunmetal">Not sent (automatic emails off)</span>;
+  } else {
+    heatLine = <span className="block text-fofGunmetal">Sending within a minute</span>;
+  }
+
+  return (
+    <div className="min-w-[150px]">
+      {heatLine}
+      {rec.final && (
+        <EmailRecordLine
+          label="Final: "
+          rec={rec.final}
+          busy={busyKey === `${team.id}:final`}
+          onResend={() => onResend(team.id, "final")}
+        />
+      )}
+    </div>
+  );
+}
+
+function ResultsEmailsBox({
+  event,
+  readOnly,
+  teams,
+  status,
+  onChanged,
+}: {
+  event: EventRow;
+  readOnly: boolean;
+  teams: RegTeam[];
+  status: EmailStatus | null;
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [teamId, setTeamId] = useState("");
+  const [testEmail, setTestEmail] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
+
+  const chosen = teamId || teams[0]?.id || "";
+
+  async function toggle(key: "email_results_auto" | "email_final_auto", value: boolean) {
+    setSaving(key);
+    setError(null);
+    setMessage(null);
+    const r = await callApi(`/api/admin/events/${encodeURIComponent(event.id)}`, "PATCH", { [key]: value });
+    setSaving(null);
+    if (!r.ok) {
+      setError(errorOf(r, "Couldn't save - try again."));
+      return;
+    }
+    onChanged();
+  }
+
+  async function sendTest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!chosen) return;
+    setSendingTest(true);
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/results-emails/test", "POST", { teamId: chosen, email: testEmail });
+    setSendingTest(false);
+    if (!r.ok) {
+      setError(errorOf(r, "The test email couldn't be sent."));
+      return;
+    }
+    setMessage(`Test email for ${chosen} sent to ${testEmail.trim()}.`);
+  }
+
+  const settings = status?.settings ?? null;
+  const switches: { key: "email_results_auto" | "email_final_auto"; label: string; hint: string }[] = [
+    {
+      key: "email_results_auto",
+      label: "Email results when a heat ends",
+      hint: "Each team's time, place so far and splits, as soon as their heat has ended.",
+    },
+    {
+      key: "email_final_auto",
+      label: "Email final places when the event is locked",
+      hint: "Sent to every team that raced, right after Finish & lock.",
+    },
+  ];
+
+  return (
+    <div className="mb-4 rounded border border-fofCharcoal bg-fofPanel p-4">
+      <h3 className="mb-1 font-display text-base tracking-wide">Results emails</h3>
+      <p className="mb-3 text-xs text-fofGunmetal">
+        Both athletes of a team get one email each time. Withdrawn teams and teams without an email address are left out.
+      </p>
+
+      {status && !status.configured && (
+        <p role="status" className="mb-3 rounded border border-fofRed px-3 py-2 text-sm text-fofRed">
+          Email sending isn&apos;t connected yet. Nothing will be sent until the email key is set up.
+        </p>
+      )}
+      {status && !status.migrated && (
+        <p role="status" className="mb-3 rounded border border-fofRed px-3 py-2 text-sm text-fofRed">
+          Results emails aren&apos;t set up in the database yet (sql/020_results_emails.sql).
+        </p>
+      )}
+
+      {settings && (
+        <div className="mb-3 space-y-2">
+          {switches.map((s) => (
+            <div key={s.key} className="flex flex-wrap items-center gap-3">
+              <button
+                role="switch"
+                aria-checked={settings[s.key]}
+                aria-label={s.label}
+                disabled={readOnly || saving !== null}
+                onClick={() => toggle(s.key, !settings[s.key])}
+                className={`rounded border px-3 py-1 text-xs disabled:opacity-50 ${
+                  settings[s.key] ? "border-fofRed text-fofRed" : "border-fofGunmetal text-fofGunmetal"
+                }`}
+              >
+                {settings[s.key] ? "✓ On" : "Off"}
+              </button>
+              <span className="text-sm">
+                {s.label}
+                <span className="block text-xs text-fofGunmetal">{s.hint}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {teams.length > 0 && (
+        <form onSubmit={sendTest} className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-fofGunmetal">
+            Team
+            <select
+              value={chosen}
+              onChange={(e) => setTeamId(e.target.value)}
+              className="tap-target mt-1 block rounded border border-fofGunmetal bg-transparent px-2"
+            >
+              {teams.map((t) => (
+                <option key={t.id} value={t.id} className="bg-fofBlack">
+                  {t.id} · {t.team_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <a
+            href={`/api/admin/results-emails/preview?teamId=${encodeURIComponent(chosen)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={BTN_SMALL}
+          >
+            Preview email
+          </a>
+          <label className="min-w-[220px] flex-1 text-xs text-fofGunmetal sm:max-w-xs">
+            Send a test to me
+            <input
+              type="email"
+              required
+              value={testEmail}
+              onChange={(e) => setTestEmail(e.target.value)}
+              placeholder="you@example.com"
+              className={`${INPUT} mt-1`}
+            />
+          </label>
+          <button type="submit" disabled={sendingTest || !status?.configured} className={BTN_SMALL}>
+            {sendingTest ? "Sending..." : "Send test"}
+          </button>
+        </form>
+      )}
+
+      {message && <p className="mt-2 text-sm text-fofPaper">{message}</p>}
+      {error && <p className="mt-2 text-sm text-fofRed">{error}</p>}
+    </div>
   );
 }
 

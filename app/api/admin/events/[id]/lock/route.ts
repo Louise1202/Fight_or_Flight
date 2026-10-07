@@ -3,6 +3,7 @@ import { isAdminSession } from "@/lib/adminAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEventById } from "@/lib/activeEvent";
 import { EVENT_COLUMNS } from "@/lib/events";
+import { processResultEmailsSafely } from "@/lib/resultsEmail";
 import { dbFail, fail, json, notAuthorized, readBody } from "../../../_lib/guard";
 
 export const dynamic = "force-dynamic";
@@ -39,5 +40,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .select(EVENT_COLUMNS)
     .single();
   if (error) return dbFail(error, "Couldn't lock the event.");
+  // Final-places emails. Short time budget, never fails the lock; the
+  // every-minute cron sends the rest (active event only).
+  await processResultEmailsSafely(event.id, 10000);
   return json({ ok: true, event: saved });
 }

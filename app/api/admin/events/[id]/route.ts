@@ -49,6 +49,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     update.registration_open = body.registration_open;
   }
+  // Results emails switches (sql/020).
+  for (const key of ["email_results_auto", "email_final_auto"] as const) {
+    if (key in body) {
+      if (typeof body[key] !== "boolean") return fail("Results emails must be on or off.");
+      update[key] = body[key] as boolean;
+    }
+  }
   if ("status" in body) {
     // 'finished' only through the lock action.
     if (body.status !== "setup" && body.status !== "live") return fail("That status isn't allowed here.");

@@ -40,6 +40,7 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/screen") || // venue big screen (same data as the leaderboard)
     path.startsWith("/api/time") || // server clock for phones and the big screen
     path.startsWith("/api/results") ||
+    path.startsWith("/r/") || // passwordless results links from the results email (random token)
     path.startsWith("/style-guide"); // public design reference page
 
   // Judge/team routes need a real Supabase session.

@@ -23,6 +23,10 @@ export type EventRow = {
   bank_details: string | null;
   status: "setup" | "live" | "finished";
   locked: boolean;
+  /** sql/020. Not in EVENT_COLUMNS (so nothing breaks before that
+   * migration is applied) - read with loadEmailSettings in lib/resultsEmail.ts. */
+  email_results_auto?: boolean;
+  email_final_auto?: boolean;
 };
 
 export const EVENT_COLUMNS =

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
 import { chunk } from "@/lib/fetchAll";
+import { processResultEmailsSafely } from "@/lib/resultsEmail";
 import { adminContext, AdminClient, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
 // Always dynamic - this hits the live database on every request.
@@ -100,6 +101,9 @@ export async function PATCH(req: NextRequest) {
     if (!existing.actual_start) return fail("This heat hasn't started yet.", 409, { wave: existing });
     return fail("This heat has already ended.", 409, { wave: existing });
   }
+  // Results emails for this heat's teams. Short time budget, never fails
+  // the action; anything left over is sent by the every-minute cron.
+  await processResultEmailsSafely(event.id, 6000);
   return json({ ok: true, wave: data[0] });
 }
 

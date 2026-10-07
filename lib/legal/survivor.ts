@@ -95,6 +95,8 @@ export const PRIVACY: LegalSection = {
     // CONFIRM: added by the developer (not in the organiser's screenshots),
     // because athletes' names are shown next to their team on public pages.
     "Your names, team name and race results will be shown publicly on the live results, on the big screen at the venue and on the results page after the event. Contact details and medical information are never shown.",
+    // CONFIRM: added by developer
+    "We will email your results to the address you gave.",
   ],
 };
 
