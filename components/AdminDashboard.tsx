@@ -1480,6 +1480,8 @@ function RegistrationsTab({
         </a>
       </div>
 
+      <RegistrationAlertsBox readOnly={readOnly} />
+
       <ResultsEmailsBox
         event={event}
         readOnly={readOnly}
@@ -1927,6 +1929,156 @@ function ResultsEmailCell({
           onResend={() => onResend(team.id, "final")}
         />
       )}
+    </div>
+  );
+}
+
+type AlertSettings = { emails: string[]; on_booked: boolean; on_confirmed: boolean; on_withdrawn: boolean };
+
+/** Admin addresses that get an email when teams book, confirm or withdraw. */
+function RegistrationAlertsBox({ readOnly }: { readOnly: boolean }) {
+  const [settings, setSettings] = useState<AlertSettings | null>(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    callApi("/api/admin/registrations/alerts", "GET").then((r) => {
+      if (r.ok && r.data?.settings) setSettings(r.data.settings as AlertSettings);
+      else setError(errorOf(r, "Couldn't load the alert settings."));
+    });
+  }, []);
+
+  async function save(next: AlertSettings, done?: string) {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/registrations/alerts", "PUT", next);
+    setBusy(false);
+    if (!r.ok) {
+      setError(errorOf(r, "Couldn't save - try again."));
+      return false;
+    }
+    setSettings(r.data?.settings as AlertSettings);
+    if (done) setMessage(done);
+    return true;
+  }
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    if (!settings) return;
+    const email = draft.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setError("That doesn't look like an email address.");
+      return;
+    }
+    if (settings.emails.includes(email)) {
+      setError("That address is already on the list.");
+      return;
+    }
+    if (await save({ ...settings, emails: [...settings.emails, email] }, `Added ${email}.`)) setDraft("");
+  }
+
+  async function sendTest() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/registrations/alerts", "POST", {});
+    setBusy(false);
+    if (!r.ok) {
+      setError(errorOf(r, "The test email couldn't be sent."));
+      return;
+    }
+    setMessage(`Test email sent to ${settings?.emails.length === 1 ? "1 address" : `${settings?.emails.length} addresses`}.`);
+  }
+
+  const toggles: { key: "on_booked" | "on_confirmed" | "on_withdrawn"; label: string }[] = [
+    { key: "on_booked", label: "A spot is booked (athlete 1 signed)" },
+    { key: "on_confirmed", label: "A team is confirmed (both signed)" },
+    { key: "on_withdrawn", label: "A team is withdrawn" },
+  ];
+
+  return (
+    <div className="mb-4 rounded border border-fofCharcoal bg-fofPanel p-4">
+      <h3 className="mb-1 font-display text-base tracking-wide">Registration alerts</h3>
+      <p className="mb-3 text-xs text-fofGunmetal">
+        These addresses get an email when a team signs up, with the athletes&apos; names, phone numbers and emails. ID numbers,
+        addresses and medical answers are never emailed.
+      </p>
+
+      {settings === null && !error && <p className="text-sm text-fofGunmetal">Loading...</p>}
+
+      {settings && (
+        <>
+          <ul className="mb-2 flex flex-wrap gap-2" aria-label="Alert email addresses">
+            {settings.emails.length === 0 && <li className="text-sm text-fofRed">No addresses yet - nobody gets these emails.</li>}
+            {settings.emails.map((em) => (
+              <li key={em} className="flex min-h-[40px] items-center gap-2 rounded border border-fofGunmetal px-3 text-sm">
+                <span className="break-all">{em}</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => save({ ...settings, emails: settings.emails.filter((x) => x !== em) }, `Removed ${em}.`)}
+                    aria-label={`Remove ${em}`}
+                    className="grid h-8 w-8 place-items-center text-fofGunmetal hover:text-fofRed disabled:opacity-50"
+                  >
+                    ✕
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {!readOnly && (
+            <form onSubmit={add} className="mb-3 flex flex-wrap gap-2">
+              <input
+                type="email"
+                inputMode="email"
+                autoCapitalize="none"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setError(null);
+                }}
+                placeholder="name@example.com"
+                aria-label="Add an email address"
+                className={`${INPUT} w-full min-w-0 sm:w-auto sm:flex-1`}
+              />
+              <button type="submit" disabled={busy || !draft.trim()} className={BTN_SMALL}>
+                Add
+              </button>
+            </form>
+          )}
+
+          <p className="mb-1 text-xs text-fofGunmetal">Send an email when</p>
+          <div className="mb-3 space-y-1">
+            {toggles.map((tg) => (
+              <label key={tg.key} className="flex min-h-[40px] cursor-pointer items-center gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={settings[tg.key]}
+                  disabled={readOnly || busy}
+                  onChange={(e) => save({ ...settings, [tg.key]: e.target.checked })}
+                  className="h-5 w-5"
+                  style={{ accentColor: "var(--fof-red)" }}
+                />
+                {tg.label}
+              </label>
+            ))}
+          </div>
+
+          {!readOnly && (
+            <button type="button" onClick={sendTest} disabled={busy || settings.emails.length === 0} className={BTN_SMALL}>
+              {busy ? "Working..." : "Send a test email"}
+            </button>
+          )}
+        </>
+      )}
+
+      {message && <p className="mt-2 text-sm text-fofPaper">{message}</p>}
+      {error && <p className="mt-2 text-sm text-fofRed">{error}</p>}
     </div>
   );
 }

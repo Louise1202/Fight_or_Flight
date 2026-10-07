@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { heatIdPrefix, nextTeamId, positionOf, renameForPosition } from "@/lib/teamId";
 import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
+import { alertSafely } from "@/lib/adminAlerts";
 import { adminContext, cleanText, dbFail, fail, json, lockedFail, readBody } from "../../_lib/guard";
 
 // Always dynamic - this hits the live database on every request.
@@ -124,6 +125,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (movingHeat && event.team_id_scheme === "heat_position") {
     await autoFixTeamIds(event.id);
+  }
+
+  // Registration alert to the organisers when a team is withdrawn.
+  if (update.status === "withdrawn" && current.status !== "withdrawn") {
+    await alertSafely(admin, event, params.id, "withdrawn");
   }
 
   return json({ ok: true, id: (update.id as string | undefined) ?? params.id });

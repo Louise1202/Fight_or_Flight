@@ -6,6 +6,7 @@ import { passToken } from "@/lib/islandPass";
 import { teamIdFromSignToken } from "@/lib/partnerLink";
 import { sendRegisteredEmail } from "@/lib/registeredEmail";
 import { isObject, validateSigned } from "@/lib/registerMember";
+import { alertSafely } from "@/lib/adminAlerts";
 
 // The second athlete completes the team's registration from their email
 // link: their own details, medical answers, consents and signature. When
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
       } catch {
         emailed = false;
       }
+      await alertSafely(admin, event, teamId, "confirmed");
     }
   }
 

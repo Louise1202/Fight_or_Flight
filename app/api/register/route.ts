@@ -8,6 +8,7 @@ import { passToken } from "@/lib/islandPass";
 import { sendRegisteredEmail } from "@/lib/registeredEmail";
 import { sendPartnerInvite, sendSpotBooked } from "@/lib/partnerEmail";
 import { signToken } from "@/lib/partnerLink";
+import { alertSafely } from "@/lib/adminAlerts";
 import { isObject, validateBasic, validateSigned, type BasicMember, type SignedAnswers } from "@/lib/registerMember";
 import {
   PASSWORD_MAX,
@@ -202,6 +203,9 @@ export async function POST(req: NextRequest) {
   } catch {
     emailed = false;
   }
+
+  // 10. Registration alert to the organisers (their own list in admin).
+  await alertSafely(admin, event, teamId, partnerLater ? "booked" : "confirmed");
 
   return NextResponse.json(
     {
