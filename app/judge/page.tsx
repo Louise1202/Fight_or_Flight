@@ -65,6 +65,14 @@ export default async function JudgeHome() {
   const wavesByNumber: Record<number, Wave> = {};
   for (const w of waves ?? []) wavesByNumber[w.wave_number] = w as Wave;
 
+  // Teams in the order their heats start (heat numbers aren't always in
+  // time order once a heat has been removed and another added).
+  const startOf = (t: any) => {
+    const w = t.wave != null ? wavesByNumber[t.wave] : undefined;
+    return w?.scheduled_start ? new Date(w.scheduled_start).getTime() : Number.MAX_SAFE_INTEGER;
+  };
+  teams.sort((a: any, b: any) => startOf(a) - startOf(b) || (a.wave ?? 999) - (b.wave ?? 999) || a.id.localeCompare(b.id));
+
   const brand = brandFor(event);
 
   return (

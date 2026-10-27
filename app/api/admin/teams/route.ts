@@ -1,11 +1,38 @@
 import { NextRequest } from "next/server";
 import { heatIdPrefix, nextTeamId } from "@/lib/teamId";
+import { fetchAll } from "@/lib/fetchAll";
 import { adminContext, cleanText, dbFail, fail, json, lockedFail, readBody } from "../_lib/guard";
 
 // Always dynamic - this hits the live database on every request.
 export const dynamic = "force-dynamic";
 
 const DIVISIONS = ["Men", "Women", "Mixed"];
+
+// Every team of the ACTIVE event, fresh - so teams that signed up after
+// the admin page was opened appear without reloading the whole page.
+// Same columns as app/admin/page.tsx.
+export async function GET() {
+  const ctx = await adminContext();
+  if (ctx.res) return ctx.res;
+  const { admin, event } = ctx;
+  const teams = await fetchAll<Record<string, unknown>>((from, to) =>
+    admin
+      .from("teams")
+      .select("id, team_name, athlete_1, athlete_2, division, wave, start_time, status, paid, registered_at, team_members(count)")
+      .eq("event_id", event.id)
+      .order("id")
+      .range(from, to)
+  ).catch(() => null);
+  if (!teams) return fail("Couldn't load the teams.", 500);
+  // Teams that signed up online have athlete records (team_members).
+  return json({
+    ok: true,
+    teams: teams.map(({ team_members, ...t }) => ({
+      ...t,
+      online: (((team_members as { count: number }[] | undefined) ?? [])[0]?.count ?? 0) > 0,
+    })),
+  });
+}
 
 // Add a team to the ACTIVE event by hand. The admin never types the id:
 // - sequential events: the next permanent id from the database

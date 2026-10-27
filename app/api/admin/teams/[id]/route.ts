@@ -3,6 +3,7 @@ import { heatIdPrefix, nextTeamId, positionOf, renameForPosition } from "@/lib/t
 import { autoFixTeamIds } from "@/lib/rebuildTeamIds";
 import { sendAdminAlert } from "@/lib/adminAlerts";
 import { inBackground } from "@/lib/background";
+import { cleanTeamName, isReservedTeamName, TEAM_NAME_MAX } from "@/components/register/rules";
 import { adminContext, cleanText, dbFail, fail, json, lockedFail, readBody } from "../../_lib/guard";
 
 // Always dynamic - this hits the live database on every request.
@@ -39,14 +40,40 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!current) return fail("That team isn't in the current event.", 404);
 
   const update: Record<string, unknown> = {};
+  const sequential = event.team_id_scheme === "sequential";
 
-  if ("team_name" in body) {
-    const name = cleanText(body.team_name, 60);
-    if (!name) return fail("A team name is required.");
-    update.team_name = name;
+  if ("team_name" in body && body.team_name !== current.team_name) {
+    if (sequential) {
+      // Same rules as online sign-up.
+      const cleaned = cleanTeamName(body.team_name);
+      if (cleaned === null) return fail(`Team names can be at most ${TEAM_NAME_MAX} characters, without < or >.`);
+      const own = `Team ${params.id}`;
+      const name = cleaned || own;
+      if (isReservedTeamName(name) && name.replace(/\s+/g, "").toLowerCase() !== own.replace(/\s+/g, "").toLowerCase()) {
+        return fail(`Names like "Team SV001" are kept for teams without a name. Leave it blank to use "${own}".`);
+      }
+      update.team_name = name;
+    } else {
+      const name = cleanText(body.team_name, 60);
+      if (!name) return fail("A team name is required.");
+      update.team_name = name;
+    }
   }
-  if ("athlete_1" in body) update.athlete_1 = cleanText(body.athlete_1, 80);
-  if ("athlete_2" in body) update.athlete_2 = cleanText(body.athlete_2, 80);
+
+  // Athlete names of a team that signed up online are kept in two places;
+  // they are changed together with "Edit team" in Registrations
+  // (app/api/admin/registrations/team), never here on their own.
+  if ("athlete_1" in body || "athlete_2" in body) {
+    const { count: memberCount } = await admin
+      .from("team_members")
+      .select("id", { count: "exact", head: true })
+      .eq("team_id", params.id);
+    if ((memberCount ?? 0) > 0) {
+      return fail("This team signed up online - change the athlete names with Edit team in Registrations.", 409);
+    }
+    if ("athlete_1" in body) update.athlete_1 = cleanText(body.athlete_1, 80);
+    if ("athlete_2" in body) update.athlete_2 = cleanText(body.athlete_2, 80);
+  }
   if ("division" in body) {
     const d = cleanText(body.division, 20);
     if (d && !DIVISIONS.includes(d)) return fail("Choose Men, Women or Mixed.");
@@ -69,6 +96,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (wave !== current.wave) {
       movingHeat = true;
       update.wave = wave;
+    }
+  }
+
+  // Withdrawing a team that hasn't raced takes it out of its heat, so the
+  // heat's count is right and an empty heat can be removed. A team with
+  // scans keeps its heat (its results belong to it).
+  if (update.status === "withdrawn" && current.status !== "withdrawn" && current.wave != null && !("wave" in update)) {
+    const { count: scanCount } = await admin
+      .from("scans")
+      .select("id", { count: "exact", head: true })
+      .eq("team_id", params.id);
+    if ((scanCount ?? 0) === 0) {
+      update.wave = null;
+      update.start_time = `${event.event_date}T00:00:00`;
     }
   }
 
@@ -133,7 +174,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     inBackground(() => sendAdminAlert(admin, event, params.id, "withdrawn"));
   }
 
-  return json({ ok: true, id: (update.id as string | undefined) ?? params.id });
+  // What was actually saved, so the admin screen can show it exactly.
+  return json({
+    ok: true,
+    id: (update.id as string | undefined) ?? params.id,
+    saved: {
+      ...("team_name" in update ? { team_name: update.team_name } : {}),
+      ...("wave" in update ? { wave: update.wave } : {}),
+      ...("start_time" in update ? { start_time: `${update.start_time}`.replace(/(\d{2}:\d{2}:\d{2})$/, "$1+00:00") } : {}),
+      ...("status" in update ? { status: update.status } : {}),
+      ...("division" in update ? { division: update.division } : {}),
+    },
+  });
 }
 
 // Delete a team of the ACTIVE event. Only possible while it has no

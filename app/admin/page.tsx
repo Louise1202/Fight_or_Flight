@@ -10,6 +10,12 @@ import AdminDashboard, { AdminTeam, EventCard } from "@/components/AdminDashboar
 
 export const dynamic = "force-dynamic";
 
+/** Teams that signed up online have athlete records (team_members). */
+function withOnlineFlag(t: AdminTeam & { team_members?: { count: number }[] }): AdminTeam {
+  const { team_members, ...rest } = t;
+  return { ...rest, online: (team_members?.[0]?.count ?? 0) > 0 };
+}
+
 // Everything here is for the ACTIVE event only (app_settings.active_event_id),
 // except the list of events itself and the judges (shared by all events).
 export default async function AdminPage() {
@@ -23,7 +29,7 @@ export default async function AdminPage() {
       fetchAll<AdminTeam>((from, to) =>
         admin
           .from("teams")
-          .select("id, team_name, athlete_1, athlete_2, division, wave, start_time, status, paid, registered_at")
+          .select("id, team_name, athlete_1, athlete_2, division, wave, start_time, status, paid, registered_at, team_members(count)")
           .eq("event_id", event.id)
           .order("id")
           .range(from, to)
@@ -74,7 +80,7 @@ export default async function AdminPage() {
     <AdminDashboard
       event={event}
       events={eventCards}
-      teams={teams}
+      teams={teams.map(withOnlineFlag)}
       judges={(judges ?? []).map((j) => ({ id: j.id, name: j.name ?? "", active: j.active !== false }))}
       assignments={assignments}
       scans={scans.map((s) => ({

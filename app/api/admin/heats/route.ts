@@ -45,9 +45,12 @@ export async function POST(req: NextRequest) {
   const { error } = await admin.from("waves").insert(row);
   if (error) return dbFail(error, "Couldn't add the heat.");
 
+  // Sent back in the same form the database gives it ("+00:00"), so the
+  // admin screen shows the time that was typed (a bare time would be read
+  // as the phone's local time - 2 hours early in South Africa).
   return json({
     ok: true,
-    wave: { wave_number: waveNumber, scheduled_start: row.scheduled_start, actual_start: null, actual_end: null, end_reason: null },
+    wave: { wave_number: waveNumber, scheduled_start: `${row.scheduled_start}+00:00`, actual_start: null, actual_end: null, end_reason: null },
   });
 }
 
@@ -76,7 +79,8 @@ export async function DELETE(req: NextRequest) {
     .from("teams")
     .select("id", { count: "exact", head: true })
     .eq("event_id", event.id)
-    .eq("wave", waveNumber as number);
+    .eq("wave", waveNumber as number)
+    .neq("status", "withdrawn");
   if (count && count > 0) {
     return fail(`Heat ${waveNumber} still has ${count} team(s) - move them to another heat first.`, 409);
   }

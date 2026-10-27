@@ -28,6 +28,8 @@ export type AdminTeam = {
   status: TeamStatus;
   paid: boolean;
   registered_at: string | null;
+  /** Signed up online (has athlete records): names are changed with Edit team. */
+  online?: boolean;
 };
 
 export type EventCard = EventRow & { teamCount: number };
@@ -84,6 +86,91 @@ function wallClock(iso: string): string {
 function wallHHMM(iso: string): string {
   const d = new Date(iso);
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/** "Heat 2 · 7:30 AM · 8 teams" - so heats can be balanced while assigning. */
+function heatOptionLabel(
+  w: { wave_number: number; scheduled_start: string; actual_start?: string | null },
+  counts: Map<number, number>
+): string {
+  const n = counts.get(w.wave_number) ?? 0;
+  return `Heat ${w.wave_number} · ${wallClock(w.scheduled_start)} · ${n} team${n === 1 ? "" : "s"}${w.actual_start ? " · started" : ""}`;
+}
+
+/** The event's heats at a glance, with an Add heat form - shown where teams are assigned. */
+function HeatsBar({
+  event,
+  readOnly,
+  sortedWaves,
+  setWaveList,
+  heatCounts,
+}: {
+  event: EventRow;
+  readOnly: boolean;
+  sortedWaves: { wave_number: number; scheduled_start: string; actual_start?: string | null }[];
+  setWaveList: React.Dispatch<React.SetStateAction<AdminWave[]>>;
+  heatCounts: Map<number, number>;
+}) {
+  const [time, setTime] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    if (!/^\d{2}:\d{2}$/.test(time)) {
+      setMsg("Choose a start time first.");
+      return;
+    }
+    setAdding(true);
+    const r = await callApi("/api/admin/heats", "POST", { time });
+    setAdding(false);
+    if (!r.ok) {
+      setMsg(errorOf(r, "Couldn't add the heat."));
+      return;
+    }
+    setWaveList((prev) => [...prev, r.data.wave]);
+    setTime("");
+    setMsg(`Heat ${r.data.wave.wave_number} added.`);
+  }
+
+  const none = sortedWaves.length === 0;
+  return (
+    <div className={`mb-4 rounded border p-3 text-sm ${none ? "border-fofRed" : "border-fofCharcoal"}`}>
+      <p className="mb-2 font-display tracking-wide">{none ? "No heats yet" : "Heats"}</p>
+      {none ? (
+        <p className="mb-2 text-xs text-fofGunmetal">
+          Add the heats first (one start time each) - then every team&apos;s heat list fills up.
+        </p>
+      ) : (
+        <ul className="mb-2 flex flex-wrap gap-2">
+          {sortedWaves.map((w) => (
+            <li key={w.wave_number} className="rounded border border-fofGunmetal px-2 py-1 text-xs">
+              {heatOptionLabel(w, heatCounts)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!readOnly && (
+        <form onSubmit={add} className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-fofGunmetal">
+            New heat on {formatEventDate(event.event_date)} at{" "}
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="ml-1 rounded border border-fofGunmetal bg-transparent px-2 py-1"
+              aria-label="Start time for the new heat"
+            />
+          </label>
+          <button type="submit" disabled={adding} aria-busy={adding} className={BTN_SMALL}>
+            {adding ? "Adding..." : "Add heat"}
+          </button>
+          {msg && <span className="text-xs text-fofGunmetal">{msg}</span>}
+        </form>
+      )}
+    </div>
+  );
 }
 
 // Real moments (a heat actually starting/ending, a sign-up) are shown in
@@ -222,6 +309,32 @@ export default function AdminDashboard({
     setRows((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
+  // Unsaved typing in Teams & heats, kept here so switching tabs never loses it.
+  const [drafts, setDrafts] = useState<Record<string, Partial<AdminTeam>>>({});
+  useEffect(() => {
+    if (Object.keys(drafts).length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [drafts]);
+
+  // How many (not withdrawn) teams are in each heat.
+  const heatCounts = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const t of rows) if (t.wave != null && t.status !== "withdrawn") m.set(t.wave, (m.get(t.wave) ?? 0) + 1);
+    return m;
+  }, [rows]);
+
+  // The team list is re-read whenever a tab is opened, so teams that signed
+  // up after this page was opened appear without reloading.
+  async function refreshTeams() {
+    const r = await callApi("/api/admin/teams", "GET");
+    if (r.ok && Array.isArray(r.data?.teams)) setRows(r.data.teams as AdminTeam[]);
+  }
+
   // --- Tabs (remembered in the address bar so a reload stays put) ---
   const defaultTab: TabKey = event.registration_open && !readOnly ? "registrations" : "race";
   const [tab, setTab] = useState<TabKey>(defaultTab);
@@ -231,6 +344,7 @@ export default function AdminDashboard({
   }, []);
   function chooseTab(t: TabKey) {
     setTab(t);
+    refreshTeams();
     try {
       window.history.replaceState(null, "", `#${t}`);
     } catch {
@@ -357,6 +471,8 @@ export default function AdminDashboard({
           event={event}
           readOnly={readOnly}
           sortedWaves={sortedWaves}
+          setWaveList={setWaveList}
+          heatCounts={heatCounts}
           onTeamChanged={patchTeamLocally}
         />
       )}
@@ -368,7 +484,11 @@ export default function AdminDashboard({
           rows={rows}
           setRows={setRows}
           waveList={waveList}
+          setWaveList={setWaveList}
           sortedWaves={sortedWaves}
+          heatCounts={heatCounts}
+          drafts={drafts}
+          setDrafts={setDrafts}
           scansByTeam={scansByTeam}
           stations={stations}
           teamsWithViewer={teamsWithViewer}
@@ -1190,6 +1310,9 @@ type RegMember = {
 type RegTeam = {
   id: string;
   team_name: string;
+  /** The names shown on results, the big screen and to judges. */
+  athlete_1?: string | null;
+  athlete_2?: string | null;
   division: string | null;
   status: TeamStatus;
   paid: boolean;
@@ -1209,17 +1332,168 @@ function countOf(v: unknown): number {
   return 0;
 }
 
+type SavedNames = {
+  team_name?: string;
+  athlete_1?: string | null;
+  athlete_2?: string | null;
+  members: { position: number; first_name: string; surname: string }[];
+};
+
+/** Change a team's name and athletes' names - saved to every place they show. */
+function EditTeamDialog({ team, onClose, onSaved }: { team: RegTeam; onClose: () => void; onSaved: (s: SavedNames) => void }) {
+  const members = [...team.members].sort((a, b) => a.position - b.position);
+  const own = `Team ${team.id}`;
+  const [teamName, setTeamName] = useState(team.team_name === own ? "" : team.team_name ?? "");
+  const [names, setNames] = useState(members.map((m) => ({ position: m.position, first_name: m.first_name, surname: m.surname })));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Where the copy on results differs from the athlete record (an older
+  // edit made in one place only), offer to use that spelling.
+  const shown = (p: number) => ((p === 1 ? team.athlete_1 : team.athlete_2) ?? "").trim();
+  const differs = (p: number) => {
+    const m = members.find((x) => x.position === p);
+    return !!m && !!shown(p) && shown(p).toLowerCase() !== `${m.first_name} ${m.surname}`.trim().toLowerCase();
+  };
+  function takeShown(p: number) {
+    const full = shown(p);
+    const cut = full.lastIndexOf(" ");
+    const first = cut > 0 ? full.slice(0, cut) : full;
+    const surname = cut > 0 ? full.slice(cut + 1) : "";
+    setNames((prev) => prev.map((n) => (n.position === p ? { ...n, first_name: first, surname } : n)));
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const changed = names.filter((n) => {
+      const m = members.find((x) => x.position === n.position);
+      return !m || m.first_name !== n.first_name.trim() || m.surname !== n.surname.trim() || differs(n.position);
+    });
+    const nameChanged = (teamName.trim() || own) !== (team.team_name ?? "");
+    if (!nameChanged && changed.length === 0) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    const r = await callApi("/api/admin/registrations/team", "PATCH", {
+      teamId: team.id,
+      ...(nameChanged ? { team_name: teamName } : {}),
+      members: changed.map((n) => ({ position: n.position, first_name: n.first_name, surname: n.surname })),
+    });
+    setSaving(false);
+    if (!r.ok) {
+      setError(errorOf(r, "Couldn't save - nothing was changed."));
+      return;
+    }
+    const t = r.data?.team ?? {};
+    onSaved({
+      team_name: t.team_name,
+      athlete_1: t.athlete_1,
+      athlete_2: t.athlete_2,
+      members: changed.map((n) => ({ position: n.position, first_name: n.first_name.trim(), surname: n.surname.trim() })),
+    });
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit ${team.id}`}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !saving) onClose();
+      }}
+    >
+      <form
+        onSubmit={save}
+        className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-lg border border-fofCharcoal bg-fofBlack p-4 sm:rounded-lg"
+      >
+        <p className="font-display text-lg">Edit team · {team.id}</p>
+        <p className="mb-3 text-xs text-fofGunmetal">
+          Changes show everywhere: results, big screen, judges, Registrations, the signed form and emails. Payments, heat and
+          everything else stay as they are.
+        </p>
+
+        <label className="mb-1 block text-sm">Team name</label>
+        <input
+          value={teamName}
+          onChange={(e) => setTeamName(e.target.value)}
+          maxLength={40}
+          placeholder={own}
+          className={INPUT}
+        />
+        <p className="mb-4 mt-1 text-xs text-fofGunmetal">Leave it blank to use &quot;{own}&quot;.</p>
+
+        {names.map((n, i) => (
+          <fieldset key={n.position} className="mb-4 rounded border border-fofCharcoal p-3">
+            <legend className="px-1 text-xs uppercase tracking-wide text-fofGunmetal">Athlete {n.position}</legend>
+            {differs(n.position) && (
+              <p className="mb-2 rounded border border-fofRed px-2 py-1 text-xs text-fofRed">
+                Results currently show &quot;{shown(n.position)}&quot;.{" "}
+                <button type="button" onClick={() => takeShown(n.position)} className="underline">
+                  Use that name
+                </button>{" "}
+                or keep the name below - Save puts the same name everywhere.
+              </p>
+            )}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-xs text-fofGunmetal">
+                First name
+                <input
+                  value={n.first_name}
+                  maxLength={60}
+                  onChange={(e) => setNames((prev) => prev.map((x, k) => (k === i ? { ...x, first_name: e.target.value } : x)))}
+                  className={`${INPUT} mt-1 text-fofPaper`}
+                />
+              </label>
+              <label className="text-xs text-fofGunmetal">
+                Surname
+                <input
+                  value={n.surname}
+                  maxLength={60}
+                  onChange={(e) => setNames((prev) => prev.map((x, k) => (k === i ? { ...x, surname: e.target.value } : x)))}
+                  className={`${INPUT} mt-1 text-fofPaper`}
+                />
+              </label>
+            </div>
+          </fieldset>
+        ))}
+
+        {error && (
+          <p role="alert" className="mb-3 text-sm text-fofRed">
+            {error}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} disabled={saving} className={`${BTN} flex-1`}>
+            Cancel
+          </button>
+          <button type="submit" disabled={saving} aria-busy={saving} className={`${BTN_PRIMARY} flex-1`}>
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function RegistrationsTab({
   event,
   readOnly,
   sortedWaves,
+  setWaveList,
+  heatCounts,
   onTeamChanged,
 }: {
   event: EventRow;
   readOnly: boolean;
   sortedWaves: AdminWave[];
+  setWaveList: React.Dispatch<React.SetStateAction<AdminWave[]>>;
+  heatCounts: Map<number, number>;
   onTeamChanged: (id: string, patch: Partial<AdminTeam>) => void;
 }) {
+  const [editing, setEditing] = useState<RegTeam | null>(null);
   const [list, setList] = useState<RegTeam[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1276,7 +1550,10 @@ function RegistrationsTab({
       setRowError(`${team.id}: ${errorOf(r, "couldn't save")} - nothing was changed.`);
       return;
     }
-    onTeamChanged(team.id, body);
+    // What the server actually saved (e.g. a withdrawn team leaves its heat).
+    const saved = (r.data?.saved ?? {}) as Partial<RegTeam & AdminTeam>;
+    if (Object.keys(saved).length) setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? { ...t, ...saved } as RegTeam : t)));
+    onTeamChanged(team.id, { ...body, ...saved } as Partial<AdminTeam>);
   }
 
   // Each athlete can pay separately; the team is paid once both have.
@@ -1485,6 +1762,39 @@ function RegistrationsTab({
         </a>
       </div>
 
+      <HeatsBar event={event} readOnly={readOnly} sortedWaves={sortedWaves} setWaveList={setWaveList} heatCounts={heatCounts} />
+
+      {editing && (
+        <EditTeamDialog
+          team={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(saved) => {
+            setList((prev) =>
+              (prev ?? []).map((t) =>
+                t.id !== editing.id
+                  ? t
+                  : {
+                      ...t,
+                      team_name: saved.team_name ?? t.team_name,
+                      athlete_1: saved.athlete_1 ?? t.athlete_1,
+                      athlete_2: saved.athlete_2 ?? t.athlete_2,
+                      members: t.members.map((m) => {
+                        const n = saved.members.find((x) => x.position === m.position);
+                        return n ? { ...m, first_name: n.first_name, surname: n.surname } : m;
+                      }),
+                    }
+              )
+            );
+            onTeamChanged(editing.id, {
+              ...(saved.team_name ? { team_name: saved.team_name } : {}),
+              ...(saved.athlete_1 !== undefined ? { athlete_1: saved.athlete_1 } : {}),
+              ...(saved.athlete_2 !== undefined ? { athlete_2: saved.athlete_2 } : {}),
+            });
+            setEditing(null);
+          }}
+        />
+      )}
+
       <RegistrationAlertsBox readOnly={readOnly} />
 
       <ResultsEmailsBox
@@ -1584,8 +1894,8 @@ function RegistrationsTab({
                         {t.wave == null ? "Assign heat" : "No heat"}
                       </option>
                       {sortedWaves.map((w) => (
-                        <option key={w.wave_number} value={w.wave_number} className="bg-fofBlack">
-                          Heat {w.wave_number} · {wallClock(w.scheduled_start)}
+                        <option key={w.wave_number} value={w.wave_number} disabled={!!w.actual_start} className="bg-fofBlack">
+                          {heatOptionLabel(w, heatCounts)}
                         </option>
                       ))}
                     </select>
@@ -1609,6 +1919,15 @@ function RegistrationsTab({
                       className="tap-target rounded border border-fofRed px-3 text-fofRed disabled:opacity-50"
                     >
                       Confirm
+                    </button>
+                  )}
+                  {!readOnly && (
+                    <button
+                      onClick={() => setEditing(t)}
+                      disabled={busy}
+                      className="tap-target rounded border border-fofGunmetal px-3 disabled:opacity-50"
+                    >
+                      Edit team
                     </button>
                   )}
                   {!readOnly && !withdrawn && (
@@ -1729,8 +2048,8 @@ function RegistrationsTab({
                           {t.wave == null ? "Assign heat" : "No heat"}
                         </option>
                         {sortedWaves.map((w) => (
-                          <option key={w.wave_number} value={w.wave_number} className="bg-fofBlack">
-                            Heat {w.wave_number} · {wallClock(w.scheduled_start)}
+                          <option key={w.wave_number} value={w.wave_number} disabled={!!w.actual_start} className="bg-fofBlack">
+                            {heatOptionLabel(w, heatCounts)}
                           </option>
                         ))}
                       </select>
@@ -1772,6 +2091,13 @@ function RegistrationsTab({
                               Confirm
                             </button>
                           )}
+                          <button
+                            onClick={() => setEditing(t)}
+                            disabled={busy}
+                            className="rounded border border-fofGunmetal px-2 py-1 text-xs disabled:opacity-50"
+                          >
+                            Edit team
+                          </button>
                           {!withdrawn && (
                             <button
                               onClick={() => withdraw(t)}
@@ -2268,12 +2594,20 @@ function TeamsTab({
   setAssignmentList,
   orphanedTeams,
   duplicateTeamNames,
+  setWaveList,
+  heatCounts,
+  drafts,
+  setDrafts,
 }: {
   event: EventRow;
   readOnly: boolean;
   rows: AdminTeam[];
   setRows: React.Dispatch<React.SetStateAction<AdminTeam[]>>;
   waveList: AdminWave[];
+  setWaveList: React.Dispatch<React.SetStateAction<AdminWave[]>>;
+  heatCounts: Map<number, number>;
+  drafts: Record<string, Partial<AdminTeam>>;
+  setDrafts: React.Dispatch<React.SetStateAction<Record<string, Partial<AdminTeam>>>>;
   sortedWaves: AdminWave[];
   scansByTeam: Map<string, AdminScan[]>;
   stations: StationDef[];
@@ -2284,44 +2618,80 @@ function TeamsTab({
 }) {
   const sequential = event.team_id_scheme === "sequential";
   const [savingId, setSavingId] = useState<string | null>(null);
-  // The heat each team had when last saved, to tell when Save moves it.
-  const [savedWave, setSavedWave] = useState<Record<string, number | null>>(() =>
-    Object.fromEntries(rows.map((t) => [t.id, t.wave]))
-  );
+  const [rowMessage, setRowMessage] = useState<{ id: string; text: string; bad: boolean } | null>(null);
 
-  function updateField(id: string, field: keyof AdminTeam, value: string) {
-    setRows((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, [field]: field === "wave" ? (value === "" ? null : Number(value)) : value } : t
-      )
-    );
+  // Typed changes are kept as "unsaved" (they survive switching tabs) until
+  // Save; the heat is saved the moment it is chosen.
+  type DraftField = "team_name" | "athlete_1" | "athlete_2" | "division";
+  function valueOf(team: AdminTeam, field: DraftField): string {
+    const d = drafts[team.id];
+    return (d && field in d ? (d[field] as string | null) : team[field]) ?? "";
+  }
+  function updateField(id: string, field: DraftField, value: string) {
+    const team = rows.find((t) => t.id === id);
+    setDrafts((prev) => {
+      const next = { ...(prev[id] ?? {}), [field]: value };
+      if (team && (team[field] ?? "") === value) delete (next as Record<string, unknown>)[field];
+      const all = { ...prev, [id]: next };
+      if (Object.keys(next).length === 0) delete all[id];
+      return all;
+    });
   }
 
   async function saveRow(team: AdminTeam) {
+    const draft = drafts[team.id];
+    if (!draft) return;
     setSavingId(team.id);
-    const movingHeat = (team.wave ?? null) !== (savedWave[team.id] ?? null);
-    const r = await callApi(`/api/admin/teams/${encodeURIComponent(team.id)}`, "PATCH", {
-      team_name: team.team_name,
-      athlete_1: team.athlete_1,
-      athlete_2: team.athlete_2,
-      division: team.division,
-      wave: team.wave,
-    });
+    setRowMessage(null);
+    const r = await callApi(`/api/admin/teams/${encodeURIComponent(team.id)}`, "PATCH", draft);
     setSavingId(null);
     if (!r.ok) {
-      window.alert(errorOf(r, "Couldn't save this team."));
+      setRowMessage({ id: team.id, text: errorOf(r, "Couldn't save this team."), bad: true });
       return;
     }
-    if (movingHeat && !sequential) {
+    const saved = (r.data?.saved ?? {}) as Partial<AdminTeam>;
+    setRows((prev) => prev.map((t) => (t.id === team.id ? { ...t, ...draft, ...saved } : t)));
+    setDrafts((prev) => {
+      const all = { ...prev };
+      delete all[team.id];
+      return all;
+    });
+    setRowMessage({ id: team.id, text: "Saved.", bad: false });
+  }
+
+  function cancelRow(team: AdminTeam) {
+    setDrafts((prev) => {
+      const all = { ...prev };
+      delete all[team.id];
+      return all;
+    });
+  }
+
+  // The heat saves straight away (and goes back if the server says no).
+  async function saveHeat(team: AdminTeam, value: string) {
+    const wave = value === "" ? null : Number(value);
+    if (wave === team.wave) return;
+    const before = team;
+    const heat = waveList.find((w) => w.wave_number === wave);
+    setRows((prev) =>
+      prev.map((t) => (t.id === team.id ? { ...t, wave, start_time: heat?.scheduled_start ?? `${event.event_date}T00:00:00` } : t))
+    );
+    setSavingId(team.id);
+    setRowMessage(null);
+    const r = await callApi(`/api/admin/teams/${encodeURIComponent(team.id)}`, "PATCH", { wave });
+    setSavingId(null);
+    if (!r.ok) {
+      setRows((prev) => prev.map((t) => (t.id === team.id ? before : t)));
+      setRowMessage({ id: team.id, text: errorOf(r, "Couldn't move this team.") + " It stays in its old heat.", bad: true });
+      return;
+    }
+    if (!sequential) {
       // Fight-or-Flight-style ids follow the heat - reload to pick them up.
       window.location.reload();
       return;
     }
-    setSavedWave((prev) => ({ ...prev, [team.id]: team.wave }));
-    if (movingHeat) {
-      const heat = waveList.find((w) => w.wave_number === team.wave);
-      updateField(team.id, "start_time", heat?.scheduled_start ?? `${event.event_date}T00:00:00`);
-    }
+    const saved = (r.data?.saved ?? {}) as Partial<AdminTeam>;
+    setRows((prev) => prev.map((t) => (t.id === team.id ? { ...t, ...saved } : t)));
   }
 
   async function setStatus(team: AdminTeam, status: TeamStatus) {
@@ -2339,7 +2709,9 @@ function TeamsTab({
       window.alert(errorOf(r, "Couldn't change this team."));
       return;
     }
-    setRows((prev) => prev.map((t) => (t.id === team.id ? { ...t, status } : t)));
+    // What the server saved too (a withdrawn team that hasn't raced leaves its heat).
+    const saved = (r.data?.saved ?? {}) as Partial<AdminTeam>;
+    setRows((prev) => prev.map((t) => (t.id === team.id ? { ...t, status, ...saved } : t)));
   }
 
   async function deleteTeam(team: AdminTeam) {
@@ -2397,7 +2769,6 @@ function TeamsTab({
     }
     const team = r.data.team as AdminTeam;
     setRows((prev) => [...prev, team].sort((a, b) => a.id.localeCompare(b.id)));
-    setSavedWave((prev) => ({ ...prev, [team.id]: team.wave }));
     setAddTeamStatus(`Added ${team.id}.`);
     setNewTeam(emptyNewTeam);
   }
@@ -2486,24 +2857,35 @@ function TeamsTab({
   const groups: { key: string; label: string; teams: AdminTeam[] }[] = sortedWaves.map((w) => ({
     key: `h${w.wave_number}`,
     label: `Heat ${w.wave_number} · ${wallClock(w.scheduled_start)}${w.actual_start ? (w.actual_end ? " · finished" : " · running") : ""}`,
-    teams: rows.filter((t) => savedWave[t.id] === w.wave_number || (savedWave[t.id] === undefined && t.wave === w.wave_number)),
+    teams: rows.filter((t) => t.wave === w.wave_number),
   }));
-  const missing = rows.filter((t) => {
-    const w = savedWave[t.id] !== undefined ? savedWave[t.id] : t.wave;
-    return w != null && !waveNumbers.has(w);
-  });
+  const missing = rows.filter((t) => t.wave != null && !waveNumbers.has(t.wave));
   if (missing.length > 0) groups.push({ key: "missing", label: "Heat that no longer exists", teams: missing });
-  const noHeat = rows.filter((t) => (savedWave[t.id] !== undefined ? savedWave[t.id] : t.wave) == null);
+  const noHeat = rows.filter((t) => t.wave == null);
   if (noHeat.length > 0 || sequential) groups.push({ key: "none", label: "No heat yet", teams: noHeat });
 
   const sortInGroup = (a: AdminTeam, b: AdminTeam) =>
     (a.status === "withdrawn" ? 1 : 0) - (b.status === "withdrawn" ? 1 : 0) || a.id.localeCompare(b.id);
 
-  const cellInput = "border-b border-transparent bg-transparent focus:border-fofRed disabled:opacity-70";
+  const cellInput = "rounded border border-fofGunmetal bg-transparent px-2 py-1 focus:border-fofRed disabled:opacity-70";
+  const unsavedCount = Object.keys(drafts).length;
 
   return (
     <section className="mb-10 min-w-0">
       <h2 className={H2}>Teams &amp; heats</h2>
+
+      <HeatsBar event={event} readOnly={readOnly} sortedWaves={sortedWaves} setWaveList={setWaveList} heatCounts={heatCounts} />
+
+      {unsavedCount > 0 && (
+        <p role="status" className="mb-3 rounded border border-fofRed px-3 py-2 text-sm text-fofRed">
+          {unsavedCount} team{unsavedCount === 1 ? " has" : "s have"} changes that aren&apos;t saved yet - tap &quot;Save
+          changes&quot; on {unsavedCount === 1 ? "that row" : "those rows"}.
+        </p>
+      )}
+      <p className="mb-3 text-xs text-fofGunmetal">
+        Choosing a heat saves straight away. Name changes need &quot;Save changes&quot;. Athletes who signed up online: change
+        their names with &quot;Edit team&quot; in Registrations, so the change shows everywhere.
+      </p>
 
       {orphanedTeams.length > 0 && (
         <p className="mb-4 text-sm text-fofRed">
@@ -2632,35 +3014,63 @@ function TeamsTab({
                 const withdrawn = team.status === "withdrawn";
                 const busy = savingId === team.id;
                 return (
-                  <tr key={team.id} className={`border-b border-fofCharcoal ${withdrawn ? "opacity-60" : ""}`}>
-                    <td className="p-2 font-mono text-xs">{team.id}</td>
+                  <tr
+                    key={team.id}
+                    className={`border-b border-fofCharcoal ${withdrawn ? "opacity-60" : ""} ${drafts[team.id] ? "bg-fofRed/10" : ""}`}
+                  >
+                    <td className="p-2 font-mono text-xs">
+                      {team.id}
+                      {drafts[team.id] && <span className="mt-1 block font-body text-[10px] font-semibold text-fofRed">Not saved yet</span>}
+                      {rowMessage?.id === team.id && (
+                        <span role="status" className={`mt-1 block max-w-[10rem] font-body text-[11px] ${rowMessage.bad ? "text-fofRed" : "text-fofGunmetal"}`}>
+                          {rowMessage.text}
+                        </span>
+                      )}
+                    </td>
                     <td className="p-2">
                       <input
-                        value={team.team_name ?? ""}
+                        value={valueOf(team, "team_name")}
                         disabled={readOnly}
+                        maxLength={sequential ? 40 : 60}
+                        aria-label={`Team name for ${team.id}`}
                         onChange={(e) => updateField(team.id, "team_name", e.target.value)}
-                        className={`w-32 ${cellInput}`}
+                        className={`w-40 ${cellInput}`}
                       />
                     </td>
                     <td className="p-2">
-                      <input
-                        value={team.athlete_1 ?? ""}
-                        disabled={readOnly}
-                        onChange={(e) => updateField(team.id, "athlete_1", e.target.value)}
-                        className={`w-28 ${cellInput}`}
-                      />
+                      {team.online ? (
+                        <span className="block w-36" title="Signed up online - change names with Edit team in Registrations">
+                          {team.athlete_1}
+                        </span>
+                      ) : (
+                        <input
+                          value={valueOf(team, "athlete_1")}
+                          disabled={readOnly}
+                          aria-label={`Athlete 1 for ${team.id}`}
+                          onChange={(e) => updateField(team.id, "athlete_1", e.target.value)}
+                          className={`w-36 ${cellInput}`}
+                        />
+                      )}
                     </td>
                     <td className="p-2">
-                      <input
-                        value={team.athlete_2 ?? ""}
-                        disabled={readOnly}
-                        onChange={(e) => updateField(team.id, "athlete_2", e.target.value)}
-                        className={`w-28 ${cellInput}`}
-                      />
+                      {team.online ? (
+                        <span className="block w-36" title="Signed up online - change names with Edit team in Registrations">
+                          {team.athlete_2}
+                          <span className="block text-[10px] text-fofGunmetal">Names: Edit team in Registrations</span>
+                        </span>
+                      ) : (
+                        <input
+                          value={valueOf(team, "athlete_2")}
+                          disabled={readOnly}
+                          aria-label={`Athlete 2 for ${team.id}`}
+                          onChange={(e) => updateField(team.id, "athlete_2", e.target.value)}
+                          className={`w-36 ${cellInput}`}
+                        />
+                      )}
                     </td>
                     <td className="p-2">
                       <select
-                        value={team.division ?? ""}
+                        value={valueOf(team, "division")}
                         disabled={readOnly}
                         onChange={(e) => updateField(team.id, "division", e.target.value)}
                         className={cellInput}
@@ -2679,17 +3089,18 @@ function TeamsTab({
                     <td className="p-2">
                       <select
                         value={team.wave ?? ""}
-                        disabled={readOnly || teamScans.length > 0}
+                        disabled={readOnly || teamScans.length > 0 || withdrawn || busy}
+                        aria-label={`Heat for ${team.id}`}
                         title={teamScans.length > 0 ? "This team has scans - it can't change heat" : undefined}
-                        onChange={(e) => updateField(team.id, "wave", e.target.value)}
+                        onChange={(e) => saveHeat(team, e.target.value)}
                         className={cellInput}
                       >
                         <option value="" className="bg-fofBlack">
                           {sequential ? "No heat yet" : "-"}
                         </option>
                         {sortedWaves.map((w) => (
-                          <option key={w.wave_number} value={w.wave_number} className="bg-fofBlack">
-                            Heat {w.wave_number}
+                          <option key={w.wave_number} value={w.wave_number} disabled={!!w.actual_start} className="bg-fofBlack">
+                            {heatOptionLabel(w, heatCounts)}
                           </option>
                         ))}
                         {team.wave != null && !waveNumbers.has(team.wave) && (
@@ -2785,13 +3196,20 @@ function TeamsTab({
                     <td className="p-2">
                       {!readOnly && (
                         <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => saveRow(team)}
-                            disabled={busy} aria-busy={busy}
-                            className="rounded border border-fofRed px-2 py-1 text-fofRed disabled:opacity-50"
-                          >
-                            {busy ? "Saving..." : "Save"}
-                          </button>
+                          {drafts[team.id] && (
+                            <>
+                              <button
+                                onClick={() => saveRow(team)}
+                                disabled={busy} aria-busy={busy}
+                                className="rounded border border-fofRed bg-fofRed px-2 py-1 text-white disabled:opacity-50"
+                              >
+                                {busy ? "Saving..." : "Save changes"}
+                              </button>
+                              <button onClick={() => cancelRow(team)} disabled={busy} className="px-1 text-xs text-fofGunmetal underline">
+                                Undo changes
+                              </button>
+                            </>
+                          )}
                           {withdrawn ? (
                             <button
                               onClick={() => setStatus(team, "registered")}

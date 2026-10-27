@@ -207,5 +207,6 @@ export async function PUT(req: NextRequest) {
     orphaned = r.orphaned;
   }
 
-  return json({ ok: true, scheduled_start: newScheduledStart, idsUpdated, orphaned });
+  // "+00:00" as the database gives it, so the admin screen shows the typed time.
+  return json({ ok: true, scheduled_start: `${newScheduledStart}+00:00`, idsUpdated, orphaned });
 }

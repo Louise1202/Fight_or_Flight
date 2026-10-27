@@ -13,6 +13,8 @@ export const runtime = "nodejs";
 type TeamRow = {
   id: string;
   team_name: string | null;
+  athlete_1: string | null;
+  athlete_2: string | null;
   division: string | null;
   status: string;
   paid: boolean;
@@ -59,7 +61,7 @@ export async function GET() {
     const teams = await fetchAll<TeamRow>((from, to) =>
       admin
         .from("teams")
-        .select("id, team_name, division, status, paid, wave, registered_at")
+        .select("id, team_name, athlete_1, athlete_2, division, status, paid, wave, registered_at")
         .eq("event_id", event.id)
         .order("id", { ascending: true })
         .range(from, to)
@@ -127,6 +129,8 @@ export async function GET() {
         return {
           id: t.id,
           team_name: t.team_name,
+          athlete_1: t.athlete_1,
+          athlete_2: t.athlete_2,
           division: t.division,
           status: t.status,
           paid: t.paid,
