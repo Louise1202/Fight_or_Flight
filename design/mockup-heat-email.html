@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Heat email mock-up</title>
+<style>
+  :root { --bg:#EEF2F7; --ink:#111827; --muted:#5B6680; --blue:#2E9BFF; --dark:#050B18; --line:#D7DFEC; }
+  body { margin:0; background:var(--bg); font-family:Arial,Helvetica,sans-serif; color:var(--ink); }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px 16px; display:grid; gap:24px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); align-items:start; }
+  h1 { font-size:18px; margin:0 0 8px; }
+  .note { font-size:13px; color:var(--muted); margin:0 0 12px; }
+  .mail { background:#fff; border-radius:10px; overflow:hidden; max-width:600px; }
+  .top { background:var(--dark); color:#fff; text-align:center; padding:24px 16px; }
+  .logo { width:84px; height:84px; border-radius:50%; background:#0B2A4A; border:2px solid var(--blue); margin:0 auto 12px; display:grid; place-items:center; font-weight:bold; color:var(--blue); font-size:12px; }
+  .big { font-size:22px; font-weight:bold; }
+  .sub { color:var(--blue); font-weight:bold; margin-top:4px; }
+  .body { padding:20px 22px; font-size:15px; line-height:1.55; }
+  .ticket { border:2px dashed var(--blue); border-radius:12px; background:#F3F8FF; padding:14px; text-align:center; margin:12px 0; }
+  .ticket .lab { font-size:11px; letter-spacing:2px; color:var(--muted); }
+  .ticket .heat { font-size:34px; font-weight:bold; }
+  .ticket .time { font-size:28px; font-weight:bold; color:#0B4A8F; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; font-size:13px; }
+  .grid div { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .grid b { display:block; font-size:15px; }
+  ol { padding-left:18px; margin:6px 0; }
+  .btn { display:inline-block; background:var(--blue); color:#fff; padding:11px 18px; border-radius:6px; font-weight:bold; text-decoration:none; }
+  .warn { border:1px solid #F0B429; background:#FFF8E6; border-radius:8px; padding:10px; font-size:13px; }
+  .foot { background:#F4F6FA; padding:14px; font-size:11px; color:var(--muted); text-align:center; }
+  .admin { background:#071226; color:#E6EEF8; border-radius:10px; padding:16px; font-size:14px; }
+  .admin h2 { font-size:15px; letter-spacing:1px; margin:0 0 6px; }
+  .admin p { color:#8FA3BF; font-size:12px; margin:0 0 10px; }
+  .chips span { display:inline-block; border:1px solid #2A3B57; border-radius:4px; padding:3px 8px; font-size:12px; margin:0 6px 6px 0; }
+  .abtn { display:inline-block; border:1px solid #2E9BFF; color:#2E9BFF; border-radius:4px; padding:8px 12px; margin:6px 6px 0 0; font-size:13px; }
+  .abtn.primary { background:#2E9BFF; color:#fff; }
+  .rowx { border-top:1px solid #1C2A44; padding:8px 0; display:flex; justify-content:space-between; gap:8px; font-size:13px; }
+  .ok { color:#5BD49A; } .chg { color:#F0B429; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section>
+    <h1>1. The email each athlete gets</h1>
+    <p class="note">Made-up team. Both athletes of a team get it.</p>
+    <div class="mail">
+      <div class="top">
+        <div class="logo">SURVIVOR</div>
+        <div class="big">You're in Heat 2</div>
+        <div class="sub">Saturday 7 November · Die Eiland</div>
+      </div>
+      <div class="body">
+        <p>Hi Johan and Thandi,</p>
+        <p>Here's your race-day plan for <b>Proef Partners</b> (SV014).</p>
+        <div class="ticket">
+          <div class="lab">YOUR HEAT</div>
+          <div class="heat">HEAT 2</div>
+          <div class="lab" style="margin-top:6px">START TIME</div>
+          <div class="time">07:30</div>
+          <div class="grid">
+            <div>Check-in opens<b>06:00</b></div>
+            <div>Be at the start by<b>07:15</b></div>
+          </div>
+        </div>
+        <p style="margin:12px 0 4px"><b>On the day</b></p>
+        <ol>
+          <li>Check in from 06:00 at Die Eiland with your Team ID <b>SV014</b> (or your Island Pass).</li>
+          <li>Be at the start line by 07:15 - your heat starts on time.</li>
+          <li>400m run before each of the 12 stations. Leaving station 12 is the finish.</li>
+        </ol>
+        <p class="warn"><b>Payment not received yet for Thandi.</b> Please pay R400 per team with reference <b>SV014 Thandi</b> before race day.</p>
+        <p style="text-align:center;margin:18px 0"><a class="btn" href="#">Follow your race live</a></p>
+        <p style="font-size:13px;color:var(--muted)">Your team login is <b>sv014</b> with the password you chose when you signed up.</p>
+      </div>
+      <div class="foot">The Box · Mission To Move<br>by Datavera Analytics</div>
+    </div>
+  </section>
+
+  <section>
+    <h1>2. Admin → Registrations: new "Heat emails" box</h1>
+    <p class="note">Nothing is sent until you press the button. Each team is emailed once; if you later move a team, it shows as "heat changed" so you can send just that team an update.</p>
+    <div class="admin">
+      <h2>HEAT EMAILS</h2>
+      <p>Each team's heat and start time, to both athletes.</p>
+      <div class="chips"><span>32 teams in a heat</span><span>0 emailed</span><span>0 heat changed since email</span></div>
+      <span class="abtn">Preview email</span><span class="abtn">Send a test to me</span><br>
+      <span class="abtn primary">Send heat emails to all 32 teams</span>
+      <p style="margin-top:12px">After sending, each team card shows:</p>
+      <div class="rowx"><span>SV014 · Heat 2 · 07:30</span><span class="ok">✓ Heat email sent 3 Nov 18:40</span></div>
+      <div class="rowx"><span>SV021 · Heat 3 · 08:45</span><span class="chg">Heat changed since email · Send update</span></div>
+      <div class="rowx"><span>SV030 · Heat 1 · 06:15</span><span>Not sent yet</span></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

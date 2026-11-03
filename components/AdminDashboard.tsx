@@ -1332,6 +1332,181 @@ function countOf(v: unknown): number {
   return 0;
 }
 
+type HeatEmailState = { teamId: string; wave: number; state: "not_sent" | "sent" | "changed" | "failed"; sentAt: string | null };
+
+/** "You're in Heat N" emails to the teams - only when the admin presses Send. */
+function HeatEmailsBox({
+  readOnly,
+  status,
+  configured,
+  onChanged,
+}: {
+  readOnly: boolean;
+  status: HeatEmailState[] | null;
+  configured: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [testTo, setTestTo] = useState("");
+
+  const list = status ?? [];
+  const sent = list.filter((s) => s.state === "sent").length;
+  const changedCount = list.filter((s) => s.state === "changed").length;
+  const toSend = list.filter((s) => s.state !== "sent").length;
+  const first = list[0]?.teamId;
+
+  async function sendAll() {
+    if (!window.confirm(`Email ${toSend} team${toSend === 1 ? "" : "s"} their heat and start time now?\n\nBoth athletes of each team get it.`)) return;
+    setBusy("all");
+    setError(null);
+    setMessage(null);
+    let total = 0;
+    let failed = 0;
+    // The server sends for up to ~45 seconds at a time; keep going until done.
+    for (let round = 0; round < 6; round++) {
+      const r = await callApi("/api/admin/heat-emails", "POST", { mode: "unsent" });
+      if (!r.ok) {
+        setError(errorOf(r, "The heat emails couldn't be sent."));
+        break;
+      }
+      total += r.data.sent ?? 0;
+      failed += r.data.failed ?? 0;
+      setMessage(`Sending... ${total} team${total === 1 ? "" : "s"} emailed so far.`);
+      if (!r.data.remaining) break;
+    }
+    setBusy(null);
+    setMessage(`${total} team${total === 1 ? "" : "s"} emailed.${failed ? ` ${failed} couldn't be sent - press Send again to retry them.` : ""}`);
+    onChanged();
+  }
+
+  async function sendTest(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("test");
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/heat-emails", "POST", { test: testTo });
+    setBusy(null);
+    if (!r.ok) {
+      setError(errorOf(r, "The test email couldn't be sent."));
+      return;
+    }
+    setMessage(`Test email (using ${r.data.sample}) sent to ${testTo.trim()}.`);
+  }
+
+  return (
+    <div className="mb-4 rounded border border-fofCharcoal bg-fofPanel p-4">
+      <h3 className="mb-1 font-display text-base tracking-wide">Heat emails</h3>
+      <p className="mb-3 text-xs text-fofGunmetal">
+        Each team&apos;s heat, start time and arrive-by time (45 minutes before, for registration and warm-up), to both
+        athletes. Nothing is sent until you press Send. If you move a team afterwards, it shows &quot;heat changed&quot; so you
+        can send that team an update.
+      </p>
+      {!configured && <p className="mb-2 text-sm text-fofRed">Email sending isn&apos;t set up.</p>}
+      {status === null ? (
+        <p className="text-sm text-fofGunmetal">Loading...</p>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap gap-2 text-xs">
+            <span className="rounded border border-fofCharcoal px-3 py-1">
+              <span className="font-display text-sm text-fofPaper">{list.length}</span> teams in a heat
+            </span>
+            <span className="rounded border border-fofCharcoal px-3 py-1">
+              <span className="font-display text-sm text-fofPaper">{sent}</span> emailed
+            </span>
+            <span className={`rounded border px-3 py-1 ${changedCount ? "border-fofRed text-fofRed" : "border-fofCharcoal"}`}>
+              <span className="font-display text-sm">{changedCount}</span> heat changed since email
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {first && (
+              <a href={`/api/admin/heat-emails?preview=${encodeURIComponent(first)}`} target="_blank" rel="noopener noreferrer" className={BTN_SMALL}>
+                Preview email
+              </a>
+            )}
+            {!readOnly && (
+              <button onClick={sendAll} disabled={!!busy || toSend === 0 || !configured} aria-busy={busy === "all"} className={`${BTN_SMALL} border-fofRed text-fofRed`}>
+                {busy === "all"
+                  ? "Sending..."
+                  : toSend === 0
+                    ? "Every team has its heat email"
+                    : sent === 0
+                      ? `Send heat emails to all ${toSend} teams`
+                      : `Send to the ${toSend} team${toSend === 1 ? "" : "s"} not emailed or changed`}
+              </button>
+            )}
+          </div>
+          {!readOnly && list.length > 0 && (
+            <form onSubmit={sendTest} className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-[220px] flex-1 text-xs text-fofGunmetal sm:max-w-xs">
+                Send a test to me
+                <input type="email" required value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" className={`${INPUT} mt-1`} />
+              </label>
+              <button type="submit" disabled={!!busy || !configured} aria-busy={busy === "test"} className={BTN_SMALL}>
+                {busy === "test" ? "Sending..." : "Send test"}
+              </button>
+            </form>
+          )}
+        </>
+      )}
+      {message && <p className="mt-2 text-sm text-fofPaper">{message}</p>}
+      {error && <p className="mt-2 text-sm text-fofRed">{error}</p>}
+    </div>
+  );
+}
+
+/** One team's heat-email line in Registrations, with a send/update button. */
+function HeatEmailLine({
+  team,
+  status,
+  readOnly,
+  onSent,
+}: {
+  team: { id: string; wave: number | null; status: string };
+  status: HeatEmailState[] | null;
+  readOnly: boolean;
+  onSent: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!status || team.wave == null || team.status === "withdrawn") return null;
+  const s = status.find((x) => x.teamId === team.id);
+  if (!s) return null;
+
+  async function send() {
+    setBusy(true);
+    setErr(null);
+    const r = await callApi("/api/admin/heat-emails", "POST", { teamId: team.id });
+    setBusy(false);
+    if (!r.ok || !r.data.sent) {
+      setErr(errorOf(r, "Couldn't send."));
+      return;
+    }
+    onSent();
+  }
+
+  const label =
+    s.state === "sent"
+      ? `✓ Heat email sent ${s.sentAt ? sast(s.sentAt, SAST_DATE_TIME) : ""}`
+      : s.state === "changed"
+        ? "Heat changed since the email"
+        : s.state === "failed"
+          ? "Heat email couldn't be sent"
+          : "Heat email not sent yet";
+  return (
+    <span className={`text-xs ${s.state === "changed" || s.state === "failed" ? "text-fofRed" : "text-fofGunmetal"}`}>
+      {label}
+      {!readOnly && s.state !== "sent" && s.state !== "not_sent" && (
+        <button onClick={send} disabled={busy} aria-busy={busy} className="ml-2 underline disabled:opacity-50">
+          {busy ? "Sending..." : "Send update"}
+        </button>
+      )}
+      {err && <span className="ml-2 text-fofRed">{err}</span>}
+    </span>
+  );
+}
+
 type SavedNames = {
   team_name?: string;
   athlete_1?: string | null;
@@ -1494,6 +1669,18 @@ function RegistrationsTab({
   onTeamChanged: (id: string, patch: Partial<AdminTeam>) => void;
 }) {
   const [editing, setEditing] = useState<RegTeam | null>(null);
+  const [heatEmails, setHeatEmails] = useState<HeatEmailState[] | null>(null);
+  const [heatEmailConfigured, setHeatEmailConfigured] = useState(true);
+  async function loadHeatEmails() {
+    const r = await callApi("/api/admin/heat-emails", "GET");
+    if (r.ok) {
+      setHeatEmails(r.data.status as HeatEmailState[]);
+      setHeatEmailConfigured(r.data.configured !== false);
+    } else setHeatEmails([]);
+  }
+  useEffect(() => {
+    loadHeatEmails();
+  }, []);
   const [list, setList] = useState<RegTeam[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1554,6 +1741,7 @@ function RegistrationsTab({
     const saved = (r.data?.saved ?? {}) as Partial<RegTeam & AdminTeam>;
     if (Object.keys(saved).length) setList((prev) => (prev ?? []).map((t) => (t.id === team.id ? { ...t, ...saved } as RegTeam : t)));
     onTeamChanged(team.id, { ...body, ...saved } as Partial<AdminTeam>);
+    if ("wave" in body || "status" in body) loadHeatEmails(); // "heat changed since the email"
   }
 
   // Each athlete can pay separately; the team is paid once both have.
@@ -1795,6 +1983,8 @@ function RegistrationsTab({
         />
       )}
 
+      <HeatEmailsBox readOnly={readOnly} status={heatEmails} configured={heatEmailConfigured} onChanged={loadHeatEmails} />
+
       <RegistrationAlertsBox readOnly={readOnly} />
 
       <ResultsEmailsBox
@@ -1957,7 +2147,10 @@ function RegistrationsTab({
                     Signed form
                   </a>
                 </div>
-                <div className="mt-2 text-xs">
+                <div className="mt-2 space-y-1 text-xs">
+                  <div>
+                    <HeatEmailLine team={t} status={heatEmails} readOnly={readOnly} onSent={loadHeatEmails} />
+                  </div>
                   <ResultsEmailCell team={t} status={emailStatus} busyKey={resendingKey} onResend={resend} />
                 </div>
               </li>
@@ -2120,6 +2313,9 @@ function RegistrationsTab({
                       )}
                     </td>
                     <td className="p-2 text-xs">
+                      <div className="mb-1">
+                        <HeatEmailLine team={t} status={heatEmails} readOnly={readOnly} onSent={loadHeatEmails} />
+                      </div>
                       <ResultsEmailCell
                         team={t}
                         status={emailStatus}
