@@ -1456,6 +1456,104 @@ function HeatEmailsBox({
   );
 }
 
+/** The athlete briefing ("Liewe Survivor atleet") - only when the admin presses Send. */
+function BriefingEmailBox({ readOnly }: { readOnly: boolean }) {
+  const [info, setInfo] = useState<{ teams: number; sent: number; configured: boolean } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [testTo, setTestTo] = useState("");
+
+  async function load() {
+    const r = await callApi("/api/admin/briefing-email", "GET");
+    if (r.ok) setInfo({ teams: r.data.teams, sent: r.data.sent, configured: r.data.configured !== false });
+  }
+  useEffect(() => {
+    load();
+  }, []);
+
+  const toSend = info ? info.teams - info.sent : 0;
+
+  async function sendAll() {
+    if (!window.confirm(`Email the athlete briefing to ${toSend} team${toSend === 1 ? "" : "s"} now?\n\nBoth athletes of each team get it.`)) return;
+    setBusy("all");
+    setError(null);
+    setMessage(null);
+    let total = 0;
+    let failed = 0;
+    for (let round = 0; round < 6; round++) {
+      const r = await callApi("/api/admin/briefing-email", "POST", { mode: "unsent" });
+      if (!r.ok) {
+        setError(errorOf(r, "The briefing couldn't be sent."));
+        break;
+      }
+      total += r.data.sent ?? 0;
+      failed += r.data.failed ?? 0;
+      setMessage(`Sending... ${total} team${total === 1 ? "" : "s"} emailed so far.`);
+      if (!r.data.remaining) break;
+    }
+    setBusy(null);
+    setMessage(`${total} team${total === 1 ? "" : "s"} emailed.${failed ? ` ${failed} couldn't be sent - press Send again to retry them.` : ""}`);
+    load();
+  }
+
+  async function sendTest(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("test");
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/briefing-email", "POST", { test: testTo });
+    setBusy(null);
+    if (!r.ok) {
+      setError(errorOf(r, "The test email couldn't be sent."));
+      return;
+    }
+    setMessage(`Test email (using ${r.data.sample}) sent to ${testTo.trim()}.`);
+  }
+
+  return (
+    <div className="mb-4 rounded border border-fofCharcoal bg-fofPanel p-4">
+      <h3 className="mb-1 font-display text-base tracking-wide">Athlete briefing</h3>
+      <p className="mb-3 text-xs text-fofGunmetal">
+        &quot;Liewe Survivor atleet&quot; - the arrangements and station rules, with each team&apos;s own heat at the top. Each team
+        gets it once, both athletes. Nothing is sent until you press Send.
+      </p>
+      {!info ? (
+        <p className="text-sm text-fofGunmetal">Loading...</p>
+      ) : (
+        <>
+          <p className="mb-3 text-sm">
+            <span className="font-display">{info.sent}</span> of {info.teams} teams have it
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <a href="/api/admin/briefing-email?preview=1" target="_blank" rel="noopener noreferrer" className={BTN_SMALL}>
+              Preview email
+            </a>
+            {!readOnly && (
+              <button onClick={sendAll} disabled={!!busy || toSend === 0 || !info.configured} aria-busy={busy === "all"} className={`${BTN_SMALL} border-fofRed text-fofRed`}>
+                {busy === "all" ? "Sending..." : toSend === 0 ? "Every team has the briefing" : `Send the briefing to ${toSend} team${toSend === 1 ? "" : "s"}`}
+              </button>
+            )}
+          </div>
+          {!readOnly && (
+            <form onSubmit={sendTest} className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-[220px] flex-1 text-xs text-fofGunmetal sm:max-w-xs">
+                Send a test to me
+                <input type="email" required value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" className={`${INPUT} mt-1`} />
+              </label>
+              <button type="submit" disabled={!!busy || !info.configured} aria-busy={busy === "test"} className={BTN_SMALL}>
+                {busy === "test" ? "Sending..." : "Send test"}
+              </button>
+            </form>
+          )}
+        </>
+      )}
+      {message && <p className="mt-2 text-sm text-fofPaper">{message}</p>}
+      {error && <p className="mt-2 text-sm text-fofRed">{error}</p>}
+    </div>
+  );
+}
+
 /** One team's heat-email line in Registrations, with a send/update button. */
 function HeatEmailLine({
   team,
@@ -1984,6 +2082,8 @@ function RegistrationsTab({
       )}
 
       <HeatEmailsBox readOnly={readOnly} status={heatEmails} configured={heatEmailConfigured} onChanged={loadHeatEmails} />
+
+      <BriefingEmailBox readOnly={readOnly} />
 
       <RegistrationAlertsBox readOnly={readOnly} />
 
