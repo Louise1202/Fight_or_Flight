@@ -1,7 +1,7 @@
 // SERVER-ONLY. The athlete briefing for Survivor ("Liewe Survivor atleet"),
-// the organisers' own wording from their PDF (received 2026-11-04). Only
-// the spelling they approved was corrected: Toeskouers, registrasie,
-// kompetisie, beoordelaar. Sent by the admin from Registrations, once per
+// the organisers' own wording from their final text (received 2026-11-05).
+// Only the spelling they approved was corrected: registrasie, kompetisie,
+// beoordelaar. Sent by the admin from Registrations, once per
 // team, to both athletes, with the team's own heat at the top. Sends are
 // recorded in message_sends (sql/026).
 import type { createAdminClient } from "@/lib/supabase/admin";
@@ -21,12 +21,12 @@ const INTRO = [
 ];
 
 const SECTIONS: { title: string; items: string[] }[] = [
-  { title: "1. Ligging", items: ["Kompetisie vind plaas by Die Eiland by die Kalahari Kuierfees Feesterien"] },
+  { title: "1. Ligging", items: ["Kompetisie vind plaas op Die Eiland by die Kalahari Kuierfees Feesterien voor die pawiljoen."] },
   {
     title: "2. Toeskouers",
     items: [
-      "Toeskouers is welkom om kompetisie te kom kyk, maar moet asb ten alle tye agter die gemerkte areas bly",
-      "Toeskouers betaal Kuierfees ingangsfooi",
+      "Toeskouers is welkom om kompetisie te kom kyk, maar moet asb ten alle tye agter die gemerkte areas bly.",
+      "Toeskouers betaal Kuierfees ingangsfooi.",
     ],
   },
   {
@@ -35,16 +35,16 @@ const SECTIONS: { title: string; items: string[] }[] = [
       "Atlete moet asb Vrydag hul nommers en ingangsbandjies by The Box kom afhaal",
       "Saterdag moet atlete asb 45 min voor deelname by registrasie tafel aanmeld",
       "Daar is ‘n opwarmings area onder die Kuierfees se “kuier tent”",
-      "Opwarming is jou eie verantwoordelikheid",
+      "Opwarming is jou eie verantwoordelikheid.",
     ],
   },
   {
     title: "4. Kompetisie",
     items: [
-      "Elke span kry ‘n stasie om deel te neem, by jou stasie is al die regte gewigte wat jy nodig het vir die kompetisie",
-      "Elke span kry 1 beoordelaar wat jou reps gaan tel en seker maak jy voldoen aan die regte bewegings standaarde- respekteer asb beoordelaar",
-      "Beoordelaar mag jou help met volgorde van die bewegings, asook regte gewigte",
-      "Kompetisie begin by jou stasie",
+      "Elke span kry ‘n stasie om deel te neem, by jou stasie is al die regte gewigte wat jy nodig het vir die kompetisie.",
+      "Elke span kry 1 beoordelaar wat jou reps gaan tel en seker maak jy voldoen aan die regte bewegings standaarde- respekteer asb beoordelaar.",
+      "Beoordelaar mag jou help met volgorde van die bewegings, asook regte gewigte.",
+      "Kompetisie begin by jou stasie.",
       "Atleet 1 hardloop 200m en tag dan deelnemer 2",
       "Deelnemer 2 hardloop dan ook 200m en eindig weer by jou stasie waar jy dan oefening gaan doen",
       "Elke span het een (1) uur om kompetisie klaar te maak, sou jul nie klaar kry nie sal jou beoordelaar jou laaste reps neerskryf en daarvolgens word jou punte bereken",
@@ -53,14 +53,14 @@ const SECTIONS: { title: string; items: string[] }[] = [
   { title: "5. Water", items: ["Deelnemers mag hul eie waterbottels, handoeke by hul stasie hou"] },
   {
     title: "6. Fotograaf",
-    items: ["Daar is ‘n fotograaf wat die hele dag se byeenkoms gaan afneem", "Fotos is na die tyd direk by hom te koop"],
+    items: ["Daar is ‘n fotograaf wat die hele dag se byeenkoms gaan afneem", "Fotos is na die tyd direk by hom te koop."],
   },
   {
     title: "7. Noodhulp",
     items: [
       "Daar is ‘n noodhulp sak beskikbaar vir klein beserings",
-      "Indien jy weet jy jy het ‘n allergie of asma, bring asb reeds nodige medikasie en asma pompie saam",
-      "Die hele byeenkoms vind buite plaas, indien jy sensitief is vir stof, wees asb voorbereid",
+      "Indien jy weet jy het ‘n allergie of asma, bring asb reeds nodige medikasie en asma pompie saam.",
+      "Die hele byeenkoms vind buite plaas, indien jy sensitief is vir stof, wees asb voorbereid.",
     ],
   },
 ];
