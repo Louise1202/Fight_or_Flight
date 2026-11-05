@@ -3634,10 +3634,19 @@ function PeopleTab({
   // --- Create judge ---
   const [judgeName, setJudgeName] = useState("");
   const [judgeUsername, setJudgeUsername] = useState("");
+  const [judgeUsernameEdited, setJudgeUsernameEdited] = useState(false);
   const [judgePassword, setJudgePassword] = useState("");
   const [judgeTeamIds, setJudgeTeamIds] = useState<string[]>([]);
   const [creatingJudge, setCreatingJudge] = useState(false);
   const [judgeCreateStatus, setJudgeCreateStatus] = useState<string | null>(null);
+
+  // The username follows the judge's first name until it's changed by hand.
+  function onJudgeNameChange(name: string) {
+    setJudgeName(name);
+    if (judgeUsernameEdited) return;
+    const firstName = name.trim().split(/\s+/)[0] ?? "";
+    setJudgeUsername(firstName.normalize("NFD").replace(/[^a-zA-Z0-9._-]/g, ""));
+  }
 
   async function createJudge(e: React.FormEvent) {
     e.preventDefault();
@@ -3659,6 +3668,7 @@ function PeopleTab({
     );
     setJudgeName("");
     setJudgeUsername("");
+    setJudgeUsernameEdited(false);
     setJudgePassword("");
     setJudgeTeamIds([]);
     setTimeout(() => window.location.reload(), 1500);
@@ -3846,14 +3856,17 @@ function PeopleTab({
             <input
               placeholder="Judge's name (e.g. Nicolene)"
               value={judgeName}
-              onChange={(e) => setJudgeName(e.target.value)}
+              onChange={(e) => onJudgeNameChange(e.target.value)}
               required
               className={INPUT}
             />
             <input
               placeholder="Username (e.g. nicolene)"
               value={judgeUsername}
-              onChange={(e) => setJudgeUsername(e.target.value)}
+              onChange={(e) => {
+                setJudgeUsername(e.target.value);
+                setJudgeUsernameEdited(e.target.value !== "");
+              }}
               required
               autoCapitalize="none"
               className={INPUT}
