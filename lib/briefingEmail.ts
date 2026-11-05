@@ -164,6 +164,7 @@ export function renderBriefing(event: EventRow, team: BriefingTeam, opts: { test
   const dv = `${baseUrl()}/brand/datavera-light.png`;
   const box = `${baseUrl()}/partners/the-box.png`;
   const m2m = `${baseUrl()}/partners/mission-to-move.png`;
+  const eventMap = `${baseUrl()}/events/survivor/event-map.jpg`;
 
   const heatBox =
     times && team.wave != null
@@ -185,6 +186,7 @@ ${opts.test ? '<p style="margin:0 0 10px 0;padding:8px;border:1px dashed #2E9BFF
 ${INTRO.map((p) => `<p style="margin:0 0 10px 0;">${escapeHtml(p)}</p>`).join("")}
 ${heatBox}
 ${SECTIONS.map((s) => `<div style="${H2}font-weight:bold;">${escapeHtml(s.title)}</div>${list(s.items)}`).join("")}
+<img src="${eventMap}" width="556" alt="Survivor event map" style="display:block;width:100%;max-width:556px;height:auto;margin:20px auto 0 auto;border-radius:8px;">
 <div style="${H2}font-weight:bold;">Reëls van elke stasie</div>
 ${STATIONS.map((s) => `<div style="${H3}font-weight:bold;">${escapeHtml(s.title)}</div>${list(s.items)}`).join("")}
 <div style="background:#FFF4F4;border:1px solid #F3C4C4;border-radius:8px;padding:10px 12px;margin-top:14px;">${list(GENERAL_RULES)}</div>
@@ -205,6 +207,7 @@ ${STATIONS.map((s) => `<div style="${H3}font-weight:bold;">${escapeHtml(s.title)
     "",
     times && team.wave != null ? `${name} (${team.id}): Heat ${team.wave} - Begin ${times.start}, meld aan teen ${times.arrive}\n` : "",
     ...SECTIONS.map(block),
+    `Event map: ${eventMap}\n`,
     "Reëls van elke stasie\n",
     ...STATIONS.map(block),
     ...GENERAL_RULES.map((r) => `- ${r}`),
