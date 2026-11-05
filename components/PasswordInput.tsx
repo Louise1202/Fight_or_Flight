@@ -11,6 +11,7 @@ export default function PasswordInput({
   id,
   className,
   autoFocus,
+  autoComplete,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -20,6 +21,7 @@ export default function PasswordInput({
   id?: string;
   className?: string;
   autoFocus?: boolean;
+  autoComplete?: string;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -34,6 +36,7 @@ export default function PasswordInput({
         required={required}
         minLength={minLength}
         autoFocus={autoFocus}
+        autoComplete={autoComplete}
         className={className ?? "tap-target w-full rounded-md border border-fofGunmetal bg-transparent px-4 pr-12 text-lg text-fofPaper"}
       />
       <button

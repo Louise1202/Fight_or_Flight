@@ -9,6 +9,7 @@ import { useSharedTheme } from "@/lib/useSharedTheme";
 import { brandFor, EventRow, formatEventDate } from "@/lib/events";
 import LiveMonitor from "./LiveMonitor";
 import PasswordInput from "./PasswordInput";
+import { firstNameUsername } from "@/lib/username";
 import CollapsibleSection from "./CollapsibleSection";
 
 // ---------------------------------------------------------------------
@@ -3643,9 +3644,40 @@ function PeopleTab({
   // The username follows the judge's first name until it's changed by hand.
   function onJudgeNameChange(name: string) {
     setJudgeName(name);
-    if (judgeUsernameEdited) return;
-    const firstName = name.trim().split(/\s+/)[0] ?? "";
-    setJudgeUsername(firstName.normalize("NFD").replace(/[^a-zA-Z0-9._-]/g, ""));
+    if (!judgeUsernameEdited) setJudgeUsername(firstNameUsername(name));
+  }
+
+  // --- Every judge's login at once ---
+  const [allJudgesPassword, setAllJudgesPassword] = useState("");
+  const [allJudgesBusy, setAllJudgesBusy] = useState(false);
+  const [allJudgesStatus, setAllJudgesStatus] = useState<string | null>(null);
+
+  async function updateAllJudgeLogins(e: React.FormEvent) {
+    e.preventDefault();
+    setAllJudgesStatus(null);
+    if (allJudgesPassword.length < 6) {
+      setAllJudgesStatus("The password must be at least 6 characters.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Update the login of all ${activeJudges.length} active judges?\n\nEach username becomes the judge's first name, and every old password stops working. They all get the password you typed. Inactive judges are left as they are.`
+      )
+    )
+      return;
+    setAllJudgesBusy(true);
+    const r = await callApi("/api/admin/judges/logins", "POST", { password: allJudgesPassword });
+    setAllJudgesBusy(false);
+    if (!r.ok) {
+      setAllJudgesStatus(errorOf(r, "Couldn't update the logins."));
+      return;
+    }
+    const failed: string[] = r.data.failed ?? [];
+    setAllJudgesStatus(
+      `Updated ${r.data.updated} judge login${r.data.updated === 1 ? "" : "s"}.` +
+        (failed.length ? ` Couldn't update: ${failed.join(", ")}.` : "")
+    );
+    setAllJudgesPassword("");
   }
 
   async function createJudge(e: React.FormEvent) {
@@ -3895,6 +3927,30 @@ function PeopleTab({
               {creatingJudge ? "Creating..." : "Create judge login"}
             </button>
             {judgeCreateStatus && <p className="text-sm text-fofGunmetal">{judgeCreateStatus}</p>}
+          </form>
+
+          <form onSubmit={updateAllJudgeLogins} className="mt-4 space-y-2 rounded border border-fofCharcoal p-4">
+            <p className="font-display text-sm">Update all judge logins</p>
+            <p className="text-xs text-fofGunmetal">
+              Each of the {activeJudges.length} active judges gets their first name as username, and all share the one
+              password you type here. Inactive judges are left as they are.
+            </p>
+            <PasswordInput
+              placeholder="Shared password (min 6 characters)"
+              value={allJudgesPassword}
+              onChange={setAllJudgesPassword}
+              minLength={6}
+              autoComplete="new-password"
+              className={`${INPUT} pr-12`}
+            />
+            <button
+              type="submit"
+              disabled={allJudgesBusy || activeJudges.length === 0}
+              className="tap-target w-full rounded btn-stamped font-display disabled:opacity-50"
+            >
+              {allJudgesBusy ? "Updating..." : "Update all judge logins"}
+            </button>
+            {allJudgesStatus && <p className="text-sm text-fofGunmetal">{allJudgesStatus}</p>}
           </form>
         </div>
 
