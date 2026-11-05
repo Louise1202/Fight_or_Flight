@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getNextAction, buildSplits, buildLegs, formatDuration, getCurrentLegElapsedMs } from "@/lib/timing";
 import { StationDef, withFinish, realStationIndex } from "@/lib/stations";
 import { effectiveStartTime, hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
 import { useSharedTheme } from "@/lib/useSharedTheme";
-import { useHeat, useHeatTimeLimit } from "@/lib/useHeat";
+import { useHeat, useHeatTimeLimit, useOpenableHeat } from "@/lib/useHeat";
+import { useSignal } from "@/lib/useSignal";
+import NoSignalBar from "./NoSignalBar";
+import { OpenHeatButton } from "./TeamCard";
 import { useTeamScans, ScanRow } from "@/lib/useTeamScans";
 import { serverNow } from "@/lib/clock";
-import { friendlyDbError, EventTheme } from "@/lib/events";
+import { EventTheme } from "@/lib/events";
 
 type Team = {
   id: string;
@@ -40,6 +41,7 @@ export default function ScanScreen({
   initialWave,
   initialTheme,
   stations,
+  renderedAt,
 }: {
   team: Team;
   event: JudgeEventInfo;
@@ -48,15 +50,31 @@ export default function ScanScreen({
   initialWave: Wave | null;
   initialTheme: "dark" | "light";
   stations: StationDef[];
+  renderedAt: number;
 }) {
   const theme = useSharedTheme(initialTheme);
-  const supabase = useMemo(() => createClient(), []);
-  const wave = useHeat(team.event_id, team.wave, initialWave);
-  const { scans, pendingCount, message, setMessage, busy, record, undo, flush } = useTeamScans({
+  const signal = useSignal();
+  const heardWave = useHeat(team.event_id, team.wave, initialWave, renderedAt);
+  const { heat: wave, open: openHeat } = useOpenableHeat(team.event_id, team.wave, heardWave);
+  const {
+    scans,
+    pendingCount,
+    message,
+    setMessage,
+    busy,
+    record,
+    undo,
+    flush,
+    logPenalty,
+    saveStoppedNote,
+    penaltyStatus,
+    stoppedNoteStatus,
+  } = useTeamScans({
     teamId: team.id,
     judgeId,
     stations,
     initialScans,
+    renderedAt,
   });
 
   const clearMessage = useCallback(() => setMessage(null), [setMessage]);
@@ -64,9 +82,8 @@ export default function ScanScreen({
   const [confirmUndo, setConfirmUndo] = useState(false);
   const [penaltySeconds, setPenaltySeconds] = useState("");
   const [penaltyNote, setPenaltyNote] = useState("");
-  const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
+  const [penaltyError, setPenaltyError] = useState<string | null>(null);
   const [stoppedNote, setStoppedNote] = useState(team.stopped_note ?? "");
-  const [stoppedNoteStatus, setStoppedNoteStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(serverNow()), 1000);
@@ -154,8 +171,6 @@ export default function ScanScreen({
     return () => clearTimeout(t);
   }, [confirmUndo]);
 
-  const savingPenalty = useRef(false);
-
   async function onUndo() {
     if (!confirmUndo) {
       setConfirmUndo(true);
@@ -165,39 +180,18 @@ export default function ScanScreen({
     await undo();
   }
 
-  async function saveStoppedNote() {
-    setStoppedNoteStatus("Saving…");
-    const { error } = await supabase.rpc("set_stopped_note", { p_team_id: team.id, p_note: stoppedNote });
-    setStoppedNoteStatus(
-      error ? friendlyDbError(error.code, "Couldn't save - check your connection and try again.") : "Saved."
-    );
-  }
-
-  async function submitPenalty(e: React.FormEvent) {
+  function submitPenalty(e: React.FormEvent) {
     e.preventDefault();
-    if (savingPenalty.current) return; // a second tap would log it twice
     const seconds = parseInt(penaltySeconds, 10);
     if (!seconds || seconds <= 0) {
-      setPenaltyStatus("Enter a number of seconds greater than 0.");
+      setPenaltyError("Enter a number of seconds greater than 0.");
       return;
     }
-    savingPenalty.current = true;
-    setPenaltyStatus("Saving…");
-    const { error } = await supabase.from("penalties").insert({
-      team_id: team.id,
-      station_number: next.stationNumber,
-      penalty_seconds: seconds,
-      judge_id: judgeId,
-      notes: penaltyNote.trim().slice(0, 200) || null,
-    });
-    savingPenalty.current = false;
-    if (error) {
-      setPenaltyStatus(friendlyDbError(error.code, "Couldn't save - check your connection and try again."));
-      return;
-    }
+    setPenaltyError(null);
+    // Clearing the box at once means a second tap can't log it twice.
     setPenaltySeconds("");
     setPenaltyNote("");
-    setPenaltyStatus("Penalty logged.");
+    logPenalty(next.stationNumber, seconds, penaltyNote);
   }
 
   const progress = (
@@ -239,12 +233,13 @@ export default function ScanScreen({
       data-brand={event.theme}
       className="ground mx-auto min-h-screen max-w-md bg-fofBlack px-4 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-6 text-fofPaper"
     >
-      <Link
+      <NoSignalBar />
+      <a
         href="/judge"
         className="tap-target mb-3 inline-flex items-center gap-1 rounded-md border border-fofGunmetal px-3 py-1.5 text-sm text-fofPaper hover:border-fofRed hover:text-fofRed"
       >
         &larr; All teams
-      </Link>
+      </a>
 
       <h1 className="mt-2 font-display text-2xl">{team.team_name}</h1>
       <p className="text-sm text-fofGunmetal">
@@ -269,6 +264,7 @@ export default function ScanScreen({
           <p className="mt-2 text-xs text-fofGunmetal">
             Your clock and Confirm button appear the instant it starts - no need to refresh.
           </p>
+          {!signal && <OpenHeatButton waveNumber={team.wave} onOpen={openHeat} />}
         </section>
       ) : ended && !next.isFinished ? (
         <>
@@ -303,7 +299,7 @@ export default function ScanScreen({
               rows={2}
             />
             <button
-              onClick={saveStoppedNote}
+              onClick={() => saveStoppedNote(stoppedNote)}
               className="tap-target mt-2 w-full rounded-md border border-fofGunmetal font-display text-sm"
             >
               Save note
@@ -437,7 +433,7 @@ export default function ScanScreen({
                 <button type="submit" className="tap-target w-full rounded-md border border-fofGunmetal font-display">
                   Log penalty at station {next.displayNumber}
                 </button>
-                {penaltyStatus && <p className="text-sm text-fofGunmetal">{penaltyStatus}</p>}
+                {(penaltyError ?? penaltyStatus) && <p className="text-sm text-fofGunmetal">{penaltyError ?? penaltyStatus}</p>}
               </form>
             </details>
           )}

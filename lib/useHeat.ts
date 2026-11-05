@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { serverNow } from "@/lib/clock";
 import { Wave, WAVE_COLUMNS } from "@/lib/waves";
 
 // Keeps one heat (event + wave number) up to date on this phone.
@@ -25,10 +26,85 @@ function keyOf(eventId: string, waveNumber: number) {
   return `${eventId}:${waveNumber}`;
 }
 
+function saveWave(key: string, wave: Wave) {
+  try {
+    localStorage.setItem(`known_heat_${key}`, JSON.stringify({ savedAt: serverNow(), wave }));
+  } catch {
+    // Storage unavailable - the page just shows what it was given.
+  }
+}
+
+function readSavedWave(key: string, renderedAt: number): Wave | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem(`known_heat_${key}`) ?? "null");
+    return saved && saved.savedAt > renderedAt ? (saved.wave as Wave) : null;
+  } catch {
+    return null;
+  }
+}
+
+// A judge with no signal can open scanning by hand when the heat has
+// started but the phone never heard. Kept on the phone until the server's
+// real start arrives, which then takes over. Scans carry their own tap
+// time, so this only unlocks the buttons and never changes a result.
+const openedListeners = new Set<() => void>();
+
+function openedKey(eventId: string, waveNumber: number) {
+  return `heat_opened_${keyOf(eventId, waveNumber)}`;
+}
+
+function readHeatOpened(eventId: string, waveNumber: number): number | null {
+  try {
+    const v = Number(localStorage.getItem(openedKey(eventId, waveNumber)));
+    return v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearHeatOpened(eventId: string, waveNumber: number) {
+  try {
+    localStorage.removeItem(openedKey(eventId, waveNumber));
+  } catch {}
+  openedListeners.forEach((l) => l());
+}
+
+/** The heat as this phone should treat it, and how to open it by hand. */
+export function useOpenableHeat(eventId: string, waveNumber: number | null, wave: Wave | null) {
+  const [openedAt, setOpenedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (waveNumber == null) return;
+    const read = () => setOpenedAt(readHeatOpened(eventId, waveNumber));
+    read();
+    openedListeners.add(read);
+    return () => {
+      openedListeners.delete(read);
+    };
+  }, [eventId, waveNumber]);
+
+  const open = useCallback(() => {
+    if (waveNumber == null) return;
+    try {
+      localStorage.setItem(openedKey(eventId, waveNumber), String(serverNow()));
+    } catch {}
+    setOpenedAt(serverNow());
+    openedListeners.forEach((l) => l());
+  }, [eventId, waveNumber]);
+
+  const heat = useMemo(
+    () => (wave && !wave.actual_start && openedAt ? { ...wave, actual_start: new Date(openedAt).toISOString() } : wave),
+    [wave, openedAt]
+  );
+  return { heat, open };
+}
+
 function startWatching(eventId: string, waveNumber: number, entry: Entry) {
   const supabase = createClient();
   const publish = (w: Wave) => {
     entry.wave = w;
+    saveWave(keyOf(eventId, waveNumber), w);
+    if (w.actual_start) clearHeatOpened(eventId, waveNumber);
     entry.listeners.forEach((l) => l(w));
   };
 
@@ -81,7 +157,14 @@ function startWatching(eventId: string, waveNumber: number, entry: Entry) {
   };
 }
 
-export function useHeat(eventId: string | null | undefined, waveNumber: number | null | undefined, initial: Wave | null) {
+export function useHeat(
+  eventId: string | null | undefined,
+  waveNumber: number | null | undefined,
+  initial: Wave | null,
+  /** When the server made this page. A page opened from the phone's saved
+   * copy is older than what the phone last heard, so that wins. */
+  renderedAt?: number
+) {
   const [wave, setWave] = useState<Wave | null>(initial);
 
   useEffect(() => {
@@ -89,7 +172,9 @@ export function useHeat(eventId: string | null | undefined, waveNumber: number |
     const key = keyOf(eventId, waveNumber);
     let entry = store.get(key);
     if (!entry) {
-      entry = { wave: initial, listeners: new Set(), stop: () => {} };
+      const saved = renderedAt != null ? readSavedWave(key, renderedAt) : null;
+      if (saved) setWave(saved);
+      entry = { wave: saved ?? initial, listeners: new Set(), stop: () => {} };
       store.set(key, entry);
       startWatching(eventId, waveNumber, entry);
     } else if (entry.wave) {

@@ -22,6 +22,7 @@ import { serverNow, syncClock } from "@/lib/clock";
 // - Last station with no run after it: ONE tap records "leave" and
 //   "finish" together (1 ms apart), and Undo removes both.
 // - Two judges on one team see each other's scans (Realtime + refresh).
+// - Penalties and stopped notes wait on the phone the same way.
 
 export type ScanRow = Scan & { id: number; client_scan_id?: string | null };
 
@@ -39,6 +40,7 @@ type PendingScan = {
 };
 
 const SELECT = "id, station_number, event_type, scanned_at, client_scan_id";
+const OFFLINE_SAVED = "Saved on this phone. It will be sent as soon as there's signal.";
 
 function queueKey(teamId: string) {
   return `pending_scans_${teamId}`;
@@ -83,6 +85,55 @@ export function newScanId(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) =>
     c === "y" ? (Math.floor(Math.random() * 4) + 8).toString(16) : Math.floor(Math.random() * 16).toString(16)
   );
+}
+
+type PendingPenalty = {
+  client_penalty_id: string;
+  team_id: string;
+  station_number: number;
+  penalty_seconds: number;
+  judge_id: string;
+  notes: string | null;
+};
+
+function readList<T>(key: string): T[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeList<T>(key: string, list: T[]) {
+  try {
+    if (list.length === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(list));
+  } catch {
+    // Storage full/unavailable - nothing more to do locally.
+  }
+}
+
+const penaltiesKey = (teamId: string) => `pending_penalties_${teamId}`;
+const noteKey = (teamId: string) => `pending_stopped_note_${teamId}`;
+const knownScansKey = (teamId: string) => `known_scans_${teamId}`;
+
+function readPendingNote(teamId: string): string | null {
+  try {
+    return localStorage.getItem(noteKey(teamId));
+  } catch {
+    return null;
+  }
+}
+
+/** What this phone last knew, if that's newer than the page it opened. */
+function readKnownScans(teamId: string, renderedAt: number): ScanRow[] | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem(knownScansKey(teamId)) ?? "null");
+    return saved && saved.savedAt > renderedAt && Array.isArray(saved.scans) ? saved.scans : null;
+  } catch {
+    return null;
+  }
 }
 
 function toInsert(p: PendingScan) {
@@ -133,17 +184,21 @@ export function useTeamScans({
   judgeId,
   stations,
   initialScans,
+  renderedAt,
 }: {
   teamId: string;
   judgeId: string;
   stations: StationDef[];
   initialScans: ScanRow[];
+  /** When the server made this page (see readKnownScans). */
+  renderedAt: number;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [scans, setScans] = useState<ScanRow[]>(() => sortScans(initialScans));
   const [pendingCount, setPendingCount] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sideNotice, setSideNotice] = useState<{ penalty?: string; note?: string }>({});
   const flushing = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -157,6 +212,69 @@ export function useTeamScans({
     setScans(merge(data as ScanRow[], queue));
     setPendingCount(queue.length);
   }, [supabase, teamId]);
+
+  // With weak signal the login can fail to renew, and the request then
+  // goes out logged-out and is refused as "not your team". That's the
+  // signal, not the judge, so whatever was being sent must be kept.
+  const sessionLost = useCallback(
+    async (code: string | undefined) => {
+      if (code !== "42501") return false;
+      const { data } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      return !data.session;
+    },
+    [supabase]
+  );
+
+  const sendPenalties = useCallback(async () => {
+    for (let guard = 0; guard < 50; guard++) {
+      const item = readList<PendingPenalty>(penaltiesKey(teamId))[0];
+      if (!item) return;
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 10000);
+      let error: { code?: string } | null = null;
+      try {
+        ({ error } = await supabase.from("penalties").insert(item).abortSignal(abort.signal));
+      } catch {
+        error = { code: "NETWORK" };
+      } finally {
+        clearTimeout(timer);
+      }
+      const arrived = !error || error.code === "23505";
+      if (!arrived && (!isPermanent(error?.code) || (await sessionLost(error?.code)))) return;
+      writeList(
+        penaltiesKey(teamId),
+        readList<PendingPenalty>(penaltiesKey(teamId)).filter((p) => p.client_penalty_id !== item.client_penalty_id)
+      );
+      setSideNotice((n) => ({
+        ...n,
+        penalty: arrived
+          ? "Penalty logged."
+          : friendlyDbError(error?.code, "A penalty couldn't be saved. Tell the race organiser."),
+      }));
+    }
+  }, [supabase, teamId, sessionLost]);
+
+  const sendNote = useCallback(async () => {
+    const note = readPendingNote(teamId);
+    if (note == null) return;
+    const { error } = await supabase
+      .rpc("set_stopped_note", { p_team_id: teamId, p_note: note })
+      .then(
+        (r) => r,
+        () => ({ error: { code: "NETWORK" } })
+      );
+    if (error && (!isPermanent(error.code) || (await sessionLost(error.code)))) return;
+    // A newer note typed while this one was on its way waits for the next pass.
+    if (readPendingNote(teamId) === note) {
+      try {
+        localStorage.removeItem(noteKey(teamId));
+      } catch {}
+    }
+    setSideNotice((n) => ({
+      ...n,
+      note: error ? friendlyDbError(error.code, "The note couldn't be saved. Tell the race organiser.") : "Saved.",
+    }));
+  }, [supabase, teamId, sessionLost]);
 
   const doFlush = useCallback(async () => {
     let dropped = 0;
@@ -182,7 +300,7 @@ export function useTeamScans({
         clearTimeout(timer);
       }
       if (error && error.code !== "23505") {
-        if (!isPermanent(error.code)) break; // temporary - keep this and everything after it
+        if (!isPermanent(error.code) || (await sessionLost(error.code))) break; // temporary - keep this and everything after it
         dropped += 1;
         lastDropCode = error.code;
       } else {
@@ -205,7 +323,9 @@ export function useTeamScans({
       setMessage((m) => (m && m.startsWith("Saved on this phone") ? "✓ Sent." : m));
     }
     if (sent > 0 || dropped > 0) await refresh();
-  }, [supabase, teamId, refresh]);
+    await sendPenalties();
+    await sendNote();
+  }, [supabase, teamId, refresh, sessionLost, sendPenalties, sendNote]);
 
   /** Sends whatever is queued, one flush at a time. */
   const flush = useCallback(() => {
@@ -222,7 +342,9 @@ export function useTeamScans({
     syncClock();
     const queue = readQueue(teamId);
     setPendingCount(queue.length);
-    if (queue.length > 0) setScans((prev) => merge(prev.filter((s) => s.id > 0), queue));
+    const known = readKnownScans(teamId, renderedAt);
+    if (known) setScans(merge(known, queue));
+    else if (queue.length > 0) setScans((prev) => merge(prev.filter((s) => s.id > 0), queue));
     flush();
     const onOnline = () => {
       syncClock();
@@ -234,7 +356,24 @@ export function useTeamScans({
       window.removeEventListener("online", onOnline);
       clearInterval(interval);
     };
+    // `renderedAt` only matters on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, flush]);
+
+  // Remembered for a page opened later with no signal. Skips the first
+  // render, which is only the page's own (possibly older) copy.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(knownScansKey(teamId), JSON.stringify({ savedAt: serverNow(), scans }));
+    } catch {
+      // Storage full/unavailable - the page just shows what it was given.
+    }
+  }, [teamId, scans]);
 
   // Another judge scanning the same team, or an admin correction.
   useEffect(() => {
@@ -307,6 +446,36 @@ export function useTeamScans({
     [teamId, judgeId, stations, flush]
   );
 
+  /** Keeps the penalty on this phone and sends it behind the scenes. */
+  const logPenalty = useCallback(
+    (stationNumber: number, seconds: number, note: string) => {
+      const item: PendingPenalty = {
+        client_penalty_id: newScanId(),
+        team_id: teamId,
+        station_number: stationNumber,
+        penalty_seconds: seconds,
+        judge_id: judgeId,
+        notes: note.trim().slice(0, 200) || null,
+      };
+      writeList(penaltiesKey(teamId), [...readList<PendingPenalty>(penaltiesKey(teamId)), item]);
+      setSideNotice((n) => ({ ...n, penalty: OFFLINE_SAVED }));
+      void flush();
+    },
+    [teamId, judgeId, flush]
+  );
+
+  /** Keeps the stopped note on this phone and sends it behind the scenes. */
+  const saveStoppedNote = useCallback(
+    (note: string) => {
+      try {
+        localStorage.setItem(noteKey(teamId), note);
+      } catch {}
+      setSideNotice((n) => ({ ...n, note: OFFLINE_SAVED }));
+      void flush();
+    },
+    [teamId, flush]
+  );
+
   /** Removes the latest step (both scans of a one-tap finish). */
   const undo = useCallback(async (): Promise<boolean> => {
     // Feedback at once - waiting for a send in progress can take a moment.
@@ -358,5 +527,19 @@ export function useTeamScans({
     return true;
   }, [supabase, teamId, refresh]);
 
-  return { scans, pendingCount, message, setMessage, busy, record, undo, flush, refresh };
+  return {
+    scans,
+    pendingCount,
+    message,
+    setMessage,
+    busy,
+    record,
+    undo,
+    flush,
+    refresh,
+    logPenalty,
+    saveStoppedNote,
+    penaltyStatus: sideNotice.penalty ?? null,
+    stoppedNoteStatus: sideNotice.note ?? null,
+  };
 }

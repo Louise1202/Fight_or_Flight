@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { useEffect, useRef, useState } from "react";
 import { getNextAction } from "@/lib/timing";
 import { StationDef } from "@/lib/stations";
 import { hasWaveStarted, hasWaveEnded, Wave } from "@/lib/waves";
 import { playHeatEndAlert } from "@/lib/heatAlert";
-import { useHeat, useHeatTimeLimit } from "@/lib/useHeat";
+import { useHeat, useHeatTimeLimit, useOpenableHeat } from "@/lib/useHeat";
+import { useSignal } from "@/lib/useSignal";
 import { useTeamScans, ScanRow } from "@/lib/useTeamScans";
 import { serverNow } from "@/lib/clock";
-import { friendlyDbError } from "@/lib/events";
 
 type Team = {
   id: string;
@@ -22,6 +20,20 @@ type Team = {
   wave: number | null;
 };
 
+/** For a judge with no signal, when the heat started but the phone never heard. */
+export function OpenHeatButton({ waveNumber, onOpen }: { waveNumber: number; onOpen: () => void }) {
+  return (
+    <button
+      onClick={() => {
+        if (window.confirm(`Has Heat ${waveNumber} really started?\n\nOnly do this if the heat is running and this phone has no signal.`)) onOpen();
+      }}
+      className="tap-target mt-3 w-full rounded-md font-display btn-stamped"
+    >
+      The heat has started: open scanning
+    </button>
+  );
+}
+
 export default function TeamCard({
   team,
   judgeId,
@@ -29,6 +41,7 @@ export default function TeamCard({
   initialWave,
   stations,
   heatMinutes,
+  renderedAt,
 }: {
   team: Team;
   judgeId: string;
@@ -36,19 +49,22 @@ export default function TeamCard({
   initialWave: Wave | null;
   stations: StationDef[];
   heatMinutes: number;
+  renderedAt: number;
 }) {
-  const supabase = useMemo(() => createClient(), []);
-  const wave = useHeat(team.event_id, team.wave, initialWave);
-  const { scans, pendingCount, message, busy, record, flush } = useTeamScans({
+  const signal = useSignal();
+  const heardWave = useHeat(team.event_id, team.wave, initialWave, renderedAt);
+  const { heat: wave, open: openHeat } = useOpenableHeat(team.event_id, team.wave, heardWave);
+  const { scans, pendingCount, message, busy, record, flush, logPenalty, penaltyStatus } = useTeamScans({
     teamId: team.id,
     judgeId,
     stations,
     initialScans,
+    renderedAt,
   });
   const [penaltyOpen, setPenaltyOpen] = useState(false);
   const [penaltySeconds, setPenaltySeconds] = useState("");
   const [penaltyNote, setPenaltyNote] = useState("");
-  const [penaltyStatus, setPenaltyStatus] = useState<string | null>(null);
+  const [penaltyError, setPenaltyError] = useState<string | null>(null);
 
   const started = hasWaveStarted(wave);
   const locallyTimedOut = useHeatTimeLimit(team.event_id, wave, heatMinutes, serverNow);
@@ -61,33 +77,18 @@ export default function TeamCard({
     wasEndedRef.current = ended;
   }, [ended]);
 
-  const savingPenalty = useRef(false);
-
-  async function submitPenalty(e: React.FormEvent) {
+  function submitPenalty(e: React.FormEvent) {
     e.preventDefault();
-    if (savingPenalty.current) return; // a second tap would log it twice
     const seconds = parseInt(penaltySeconds, 10);
     if (!seconds || seconds <= 0) {
-      setPenaltyStatus("Enter seconds greater than 0.");
+      setPenaltyError("Enter seconds greater than 0.");
       return;
     }
-    savingPenalty.current = true;
-    setPenaltyStatus("Saving…");
-    const { error } = await supabase.from("penalties").insert({
-      team_id: team.id,
-      station_number: next.stationNumber,
-      penalty_seconds: seconds,
-      judge_id: judgeId,
-      notes: penaltyNote.trim().slice(0, 200) || null,
-    });
-    savingPenalty.current = false;
-    if (error) {
-      setPenaltyStatus(friendlyDbError(error.code, "Couldn't save - check your connection."));
-      return;
-    }
+    setPenaltyError(null);
+    // Clearing the box at once means a second tap can't log it twice.
     setPenaltySeconds("");
     setPenaltyNote("");
-    setPenaltyStatus("Penalty logged.");
+    logPenalty(next.stationNumber, seconds, penaltyNote);
   }
 
   const buttonLabel = next.finishesHere
@@ -98,7 +99,7 @@ export default function TeamCard({
 
   return (
     <div className="rounded-md border border-fofGunmetal p-4">
-      <Link href={`/judge/${team.id}`} className="block">
+      <a href={`/judge/${team.id}`} className="block">
         <p className="font-display text-lg">
           {team.team_name} <span className="nums text-xs text-fofGunmetal">{team.id}</span>
         </p>
@@ -106,18 +107,21 @@ export default function TeamCard({
           {team.athlete_1}
           {team.athlete_2 ? ` & ${team.athlete_2}` : ""}
         </p>
-      </Link>
+      </a>
 
       {team.wave == null ? (
         <p className="mt-2 text-sm text-fofGunmetal">No heat yet</p>
       ) : !started ? (
-        <p className="mt-2 text-sm text-fofGunmetal">Waiting for Heat {team.wave} to start</p>
+        <>
+          <p className="mt-2 text-sm text-fofGunmetal">Waiting for Heat {team.wave} to start</p>
+          {!signal && <OpenHeatButton waveNumber={team.wave} onOpen={openHeat} />}
+        </>
       ) : ended && !next.isFinished ? (
         <>
           <p className="mt-1 text-sm text-fofGunmetal">Heat {team.wave} has ended - team stopped where they were</p>
-          <Link href={`/judge/${team.id}`} className="mt-2 inline-block text-xs text-fofRed underline">
+          <a href={`/judge/${team.id}`} className="mt-2 inline-block text-xs text-fofRed underline">
             Add a note on where they stopped &rarr;
-          </Link>
+          </a>
         </>
       ) : (
         <>
@@ -195,7 +199,7 @@ export default function TeamCard({
               <button type="submit" className="tap-target rounded-md border border-fofGunmetal font-display text-sm">
                 Log penalty
               </button>
-              {penaltyStatus && <p className="text-xs text-fofGunmetal">{penaltyStatus}</p>}
+              {(penaltyError ?? penaltyStatus) && <p className="text-xs text-fofGunmetal">{penaltyError ?? penaltyStatus}</p>}
             </form>
           )}
         </>

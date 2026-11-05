@@ -93,6 +93,7 @@ export default async function JudgeHome() {
       wavesByNumber={wavesByNumber}
       initialTheme={settings?.theme === "light" ? "light" : "dark"}
       stations={(stations ?? []).map(toStationDef)}
+      renderedAt={Date.now()}
     />
   );
 }

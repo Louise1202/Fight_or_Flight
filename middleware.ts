@@ -60,6 +60,6 @@ export const config = {
   // Without this, a logged-out request for something as simple as the
   // logo gets redirected to /login and served HTML instead of the image.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|avif)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw.js|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|avif)$).*)",
   ],
 };

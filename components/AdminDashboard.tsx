@@ -1057,6 +1057,61 @@ function RaceDayTab({
     setHeatStatus(errorOf(r, "Couldn't undo that."));
   }
 
+  // --- Real start time (a start pressed late with no signal) ---
+  const [correctingStartFor, setCorrectingStartFor] = useState<number | null>(null);
+  const [startTimeInput, setStartTimeInput] = useState("");
+
+  function beginCorrectStart(w: { wave_number: number; actual_start?: string | null }) {
+    const sastMs = new Date(w.actual_start!).getTime() + 2 * 3600 * 1000;
+    setStartTimeInput(new Date(sastMs).toISOString().slice(11, 19));
+    setCorrectingStartFor(w.wave_number);
+  }
+
+  async function correctStart(waveNumber: number) {
+    if (!window.confirm(`Change the start of Heat ${waveNumber} to ${startTimeInput}?\n\nEvery team in this heat is re-timed from it. No scans are touched.`)) return;
+    setWaveActionId(waveNumber);
+    setHeatStatus(null);
+    const r = await callApi("/api/admin/waves", "PUT", { waveNumber, startTime: startTimeInput });
+    setWaveActionId(null);
+    if (r.ok) {
+      setCorrectingStartFor(null);
+      return replaceWave(r.data.wave);
+    }
+    setHeatStatus(errorOf(r, "Couldn't correct the start time."));
+  }
+
+  function correctStartControl(w: { wave_number: number; actual_start?: string | null }, busy: boolean) {
+    if (correctingStartFor !== w.wave_number) {
+      return (
+        <button onClick={() => beginCorrectStart(w)} className="mt-2 block w-full text-xs text-fofGunmetal underline">
+          Correct the start time
+        </button>
+      );
+    }
+    return (
+      <div className="mt-2 flex items-center justify-center gap-2">
+        <input
+          type="time"
+          step={1}
+          aria-label={`Real start time of Heat ${w.wave_number}`}
+          value={startTimeInput}
+          onChange={(e) => setStartTimeInput(e.target.value)}
+          className="rounded border border-fofGunmetal bg-transparent px-1 py-0.5 text-sm"
+        />
+        <button
+          onClick={() => correctStart(w.wave_number)}
+          disabled={busy || !startTimeInput}
+          className="text-xs text-fofRed underline disabled:opacity-50"
+        >
+          {busy ? "..." : "Save"}
+        </button>
+        <button onClick={() => setCorrectingStartFor(null)} className="text-xs text-fofGunmetal underline">
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
   // --- Scheduled time ---
   const [editingScheduleFor, setEditingScheduleFor] = useState<number | null>(null);
   const [scheduleTimeInput, setScheduleTimeInput] = useState("");
@@ -1228,6 +1283,7 @@ function RaceDayTab({
                             Undo start (mis-click)
                           </button>
                         )}
+                        {correctStartControl(w, busy)}
                       </>
                     )}
                   </>
@@ -1246,13 +1302,16 @@ function RaceDayTab({
                       total duration{endReasonLabel(w.end_reason) ? ` · ${endReasonLabel(w.end_reason)}` : ""}
                     </p>
                     {!readOnly && (
-                      <button
-                        onClick={() => undoHeat(w.wave_number, "end")}
-                        disabled={busy} aria-busy={busy}
-                        className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
-                      >
-                        Reopen heat
-                      </button>
+                      <>
+                        <button
+                          onClick={() => undoHeat(w.wave_number, "end")}
+                          disabled={busy} aria-busy={busy}
+                          className="mt-2 text-xs text-fofGunmetal underline disabled:opacity-50"
+                        >
+                          Reopen heat
+                        </button>
+                        {correctStartControl(w, busy)}
+                      </>
                     )}
                   </>
                 )}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { forgetJudgePages } from "@/lib/offlinePages";
 
 export default function LogoutButton() {
   const router = useRouter();
@@ -15,6 +16,7 @@ export default function LogoutButton() {
         setLeaving(true);
         const supabase = createClient();
         await supabase.auth.signOut();
+        await forgetJudgePages();
         router.push("/login");
         router.refresh();
       }}

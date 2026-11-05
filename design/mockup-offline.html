@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Offline mock-up</title>
+<style>
+  :root { --bg:#EEF2F7; --ink:#111827; --muted:#5B6680; --dark:#050B18; --panel:#101A2E; --line:#2A3650; --blue:#2E9BFF; --amber:#F5B73B; --green:#35C46F; --paper:#F4F6FA; --grey:#9AA6BD; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Arial,Helvetica,sans-serif; padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .key { color:var(--muted); font-size:14px; margin:0 0 16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:16px; max-width:1180px; }
+  .label { font-weight:bold; font-size:14px; margin:0 0 6px; }
+  .why { color:var(--muted); font-size:13px; margin:8px 0 0; line-height:1.4; }
+  .phone { background:var(--dark); color:var(--paper); border-radius:18px; padding:14px; min-height:330px; font-size:14px; }
+  .bar { background:var(--amber); color:#1B1300; border-radius:8px; padding:8px 10px; font-size:13px; font-weight:bold; margin-bottom:12px; }
+  .team { font-weight:bold; font-size:17px; }
+  .small { color:var(--grey); font-size:12px; }
+  .box { border:2px solid var(--line); border-radius:10px; padding:14px; text-align:center; margin-top:12px; }
+  .btn { display:block; width:100%; border:0; border-radius:8px; background:var(--blue); color:#fff; font-weight:bold; font-size:15px; padding:13px 8px; margin-top:12px; }
+  .ghost { background:transparent; border:1px solid var(--grey); color:var(--paper); }
+  .clock { font-size:26px; font-weight:bold; color:var(--blue); }
+  .ok { color:var(--green); font-size:13px; margin-top:8px; }
+  .row { display:flex; justify-content:space-between; gap:8px; background:var(--panel); border-radius:8px; padding:8px 10px; margin-top:10px; font-size:13px; }
+  .field { border:1px solid var(--grey); border-radius:8px; padding:10px; margin-top:10px; font-size:15px; }
+  .new { outline:3px solid #FFE27A; outline-offset:2px; }
+</style>
+</head>
+<body>
+<h1>What changes on screen when there is no signal</h1>
+<p class="key">Mock-up with made-up team names. The yellow outline marks what is new. Everything else stays as it is today.</p>
+<div class="grid">
+
+  <section>
+    <p class="label">1. Judge phone: no signal during a heat</p>
+    <div class="phone">
+      <div class="bar new">No signal. Keep going, everything is saved on this phone.</div>
+      <div class="team">Proef Partners</div>
+      <div class="small">Heat 2 · SV014</div>
+      <div class="box"><div class="small">Race clock</div><div class="clock">00:14:32</div><div>Station 3 · DB Lunges</div></div>
+      <div class="row"><span>3 scans waiting to send</span><span>Retry now</span></div>
+      <button class="btn">Confirm leaving · Station 3</button>
+      <div class="ok">Saved on this phone. It will be sent as soon as there's signal.</div>
+    </div>
+    <p class="why">The bar shows the judge it is safe to carry on. The tap time is kept, so the time stays correct.</p>
+  </section>
+
+  <section>
+    <p class="label">2. Judge phone: the heat started, but the phone didn't hear</p>
+    <div class="phone">
+      <div class="bar new">No signal. Keep going, everything is saved on this phone.</div>
+      <div class="team">Proef Partners</div>
+      <div class="small">Heat 2 · SV014</div>
+      <div class="box">
+        <div class="small">Heat 2 hasn't started yet</div>
+        <div style="font-weight:bold;margin-top:6px">Waiting for the admin to start</div>
+      </div>
+      <button class="btn new">The heat has started: open scanning</button>
+      <div class="small" style="margin-top:8px">Only appears when this phone has no signal. Asks "Are you sure?" first.</div>
+    </div>
+    <p class="why">Today the judge would be stuck here with no Confirm button until signal returned.</p>
+  </section>
+
+  <section>
+    <p class="label">3. Judge phone: penalty with no signal</p>
+    <div class="phone">
+      <div class="bar new">No signal. Keep going, everything is saved on this phone.</div>
+      <div class="team">Log a penalty</div>
+      <div class="field">120 seconds</div>
+      <div class="field">Dropped the KB</div>
+      <button class="btn ghost">Log penalty at station 1</button>
+      <div class="ok new">Saved on this phone. It will be sent as soon as there's signal.</div>
+    </div>
+    <p class="why">Today this shows an error and the penalty has to be typed again. The "where did they stop" note works the same way.</p>
+  </section>
+
+  <section>
+    <p class="label">4. Admin: fix a heat start that was pressed late</p>
+    <div class="phone">
+      <div class="team">Heat 2</div>
+      <div class="small">Started 07:33:10 · Running</div>
+      <div class="box new" style="text-align:left">
+        <div class="small">Real start time</div>
+        <div class="field">07:30:00</div>
+        <button class="btn">Correct the start time</button>
+        <div class="small" style="margin-top:8px">Only the start time changes. Every team in this heat is re-timed from it. No scans are touched.</div>
+      </div>
+    </div>
+    <p class="why">If your signal drops and you can only press Start 3 minutes late, this stops every team in the heat getting 3 minutes added.</p>
+  </section>
+
+</div>
+</body>
+</html>

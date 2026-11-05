@@ -59,6 +59,7 @@ export default async function JudgeScanPage({ params }: { params: { teamId: stri
       initialWave={wave ?? null}
       initialTheme={settings?.theme === "light" ? "light" : "dark"}
       stations={(stations ?? []).map(toStationDef)}
+      renderedAt={Date.now()}
     />
   );
 }

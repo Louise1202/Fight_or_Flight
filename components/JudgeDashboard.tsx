@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import LogoutButton from "./LogoutButton";
+import NoSignalBar from "./NoSignalBar";
 import TeamCard from "./TeamCard";
+import { saveJudgePages } from "@/lib/offlinePages";
 import { Wave } from "@/lib/waves";
 import { StationDef } from "@/lib/stations";
 import { useSharedTheme } from "@/lib/useSharedTheme";
@@ -27,6 +30,7 @@ export default function JudgeDashboard({
   wavesByNumber,
   initialTheme,
   stations,
+  renderedAt,
 }: {
   judgeName: string;
   judgeId: string;
@@ -36,8 +40,15 @@ export default function JudgeDashboard({
   wavesByNumber: Record<number, Wave>;
   initialTheme: "dark" | "light";
   stations: StationDef[];
+  renderedAt: number;
 }) {
   const theme = useSharedTheme(initialTheme);
+
+  // Opening this list keeps it and every team's screen on the phone.
+  const teamPaths = teams.map((t) => `/judge/${t.id}`).join(",");
+  useEffect(() => {
+    saveJudgePages(["/judge", ...teamPaths.split(",").filter(Boolean)]);
+  }, [teamPaths]);
 
   return (
     <main
@@ -45,6 +56,7 @@ export default function JudgeDashboard({
       data-brand={event.theme}
       className="ground mx-auto min-h-screen max-w-md bg-fofBlack px-4 py-8 text-fofPaper"
     >
+      <NoSignalBar />
       <header className="mb-6 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <img
@@ -74,6 +86,7 @@ export default function JudgeDashboard({
             initialWave={team.wave != null ? wavesByNumber[team.wave] ?? null : null}
             stations={stations}
             heatMinutes={event.heat_minutes}
+            renderedAt={renderedAt}
           />
         ))}
       </div>

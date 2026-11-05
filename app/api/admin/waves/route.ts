@@ -157,8 +157,60 @@ export async function DELETE(req: NextRequest) {
   return json({ ok: true, wave: data?.[0] ?? null });
 }
 
+async function firstScanAt(admin: AdminClient, eventId: string, waveNumber: number): Promise<number | null> {
+  const { data: teams } = await admin.from("teams").select("id").eq("event_id", eventId).eq("wave", waveNumber);
+  let first: number | null = null;
+  for (const part of chunk((teams ?? []).map((t) => t.id))) {
+    const { data } = await admin
+      .from("scans")
+      .select("scanned_at")
+      .in("team_id", part)
+      .order("scanned_at", { ascending: true })
+      .limit(1);
+    const at = data?.[0] ? new Date(data[0].scanned_at).getTime() : null;
+    if (at != null && (first == null || at < first)) first = at;
+  }
+  return first;
+}
+
+// Correct when a heat really started, for a start pressed late because the
+// admin had no signal. Only the start time changes: every team is re-timed
+// from it and no scan is touched. The date stays the heat's own, in South
+// African time.
+async function correctStart(admin: AdminClient, eventId: string, waveNumber: number, time: string) {
+  let existing;
+  try {
+    existing = await loadWave(admin, eventId, waveNumber);
+  } catch {
+    return fail("Couldn't load that heat.", 500);
+  }
+  if (!existing) return fail("That heat doesn't exist.", 404);
+  if (!existing.actual_start) return fail("This heat hasn't started yet.", 409);
+
+  const sastDate = new Date(new Date(existing.actual_start).getTime() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+  const newStart = new Date(`${sastDate}T${time.length === 5 ? `${time}:00` : time}+02:00`).getTime();
+  if (newStart > Date.now()) return fail("That time is still in the future.");
+  if (existing.actual_end && newStart >= new Date(existing.actual_end).getTime()) {
+    return fail("That time is after this heat ended.");
+  }
+  const first = await firstScanAt(admin, eventId, waveNumber);
+  if (first != null && newStart > first) {
+    return fail("A team in this heat has a scan before that time. Choose an earlier time.", 409);
+  }
+
+  const { data, error } = await admin
+    .from("waves")
+    .update({ actual_start: new Date(newStart).toISOString() })
+    .eq("event_id", eventId)
+    .eq("wave_number", waveNumber)
+    .select(WAVE_COLUMNS);
+  if (error) return dbFail(error, "Couldn't correct the start time.");
+  return json({ ok: true, wave: data?.[0] ?? null });
+}
+
 // Edit the SCHEDULED time of day of a heat that hasn't started. The date
-// always comes from the event.
+// always comes from the event. With { startTime } instead, corrects the
+// real start of a heat that has started.
 export async function PUT(req: NextRequest) {
   const ctx = await adminContext();
   if (ctx.res) return ctx.res;
@@ -167,6 +219,13 @@ export async function PUT(req: NextRequest) {
 
   const body = await readBody(req);
   const waveNumber = waveNumberOf(body);
+  if (body && "startTime" in body) {
+    const startTime = body.startTime;
+    if (!waveNumber || typeof startTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(startTime)) {
+      return fail("Choose a heat and a time.");
+    }
+    return correctStart(admin, event.id, waveNumber, startTime);
+  }
   const time = body?.time;
   if (!waveNumber || typeof time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
     return fail("Choose a heat and a time.");
