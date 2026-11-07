@@ -58,6 +58,9 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       ? `${ordinal(result.divisionRank)} in ${team.division?.trim() || "division"}${result.heatsToGo > 0 ? " so far" : ""}`
       : "Finished"
     : `in ${formatDuration(result.timeMs ?? 0)}`;
+  // "Fancy" bold/italic letters some teams type (𝐒𝐰𝐞𝐚𝐭) aren't in the
+  // picture's font and show as boxes - use the plain letters instead.
+  const teamName = (team.team_name ?? "").replace(/[\u{1D400}-\u{1D7FF}]/gu, (c) => c.normalize("NFKC"));
   const athletes = [team.athlete_1, team.athlete_2].map((n) => (n ?? "").trim()).filter(Boolean).join(" & ");
   const fileName = `${event.name}-${team.id}`.replace(/[^A-Za-z0-9-]+/g, "-") + ".png";
 
@@ -94,7 +97,7 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
           <div style={{ display: "flex", fontSize: 40, color: paper, letterSpacing: 3 }}>
             {finished ? "CONGRATULATIONS!" : "WHAT A FIGHT!"}
           </div>
-          <div style={{ display: "flex", fontSize: 64, fontWeight: 700, marginTop: 16, textAlign: "center" }}>{team.team_name}</div>
+          <div style={{ display: "flex", fontSize: 64, fontWeight: 700, marginTop: 16, textAlign: "center" }}>{teamName}</div>
           {athletes ? <div style={{ display: "flex", fontSize: 32, color: muted, marginTop: 8 }}>{athletes}</div> : null}
           <div style={{ display: "flex", fontSize: finished ? 170 : 120, fontWeight: 700, color: accent, marginTop: 30 }}>{big}</div>
           <div style={{ display: "flex", fontSize: 44, color: paper, marginTop: 6 }}>{sub}</div>

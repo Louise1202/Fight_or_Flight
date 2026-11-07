@@ -2,12 +2,52 @@ import { NextRequest } from "next/server";
 import { fetchAll } from "@/lib/fetchAll";
 import { loadEventData } from "@/components/results/data";
 import { emailConfigured, EmailKind, loadEmailSettings, recipientsFor, sendTeamEmail } from "@/lib/resultsEmail";
-import { adminContext, fail, json, readBody, teamInEvent } from "../_lib/guard";
+import { adminContext, AdminClient, fail, json, readBody, teamInEvent } from "../_lib/guard";
 
-// Results emails of the ACTIVE event: status per team (GET) and
-// "Send again" for one team (POST { teamId, kind, resend: true }).
+// Results emails of the ACTIVE event: status per team (GET),
+// "Send again" for one team (POST { teamId, kind, resend: true }), and
+// the real results for every team whose heat email went out before their
+// heat actually ran (POST { mode: "resend-stale-heat" }).
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const GAP_MS = 600; // Resend allows about 2 requests a second
+const BUDGET_MS = 45_000;
+
+/**
+ * Teams whose heat email was sent BEFORE their heat's latest start - e.g.
+ * a heat started for a test, closed by the time limit (emailing an empty
+ * result), then reset and raced for real. Their email is out of date.
+ * After a resend the email is newer than the start, so it drops off.
+ */
+async function staleHeatTeams(admin: AdminClient, eventId: string): Promise<string[]> {
+  const [{ data: teams }, { data: waves }, rows] = await Promise.all([
+    admin.from("teams").select("id, wave").eq("event_id", eventId).neq("status", "withdrawn"),
+    admin.from("waves").select("wave_number, actual_start, actual_end").eq("event_id", eventId),
+    fetchAll<{ team_id: string; sent_at: string }>((from, to) =>
+      admin
+        .from("result_emails")
+        .select("id, team_id, sent_at, teams!inner(event_id)")
+        .eq("teams.event_id", eventId)
+        .eq("kind", "heat")
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+  ]);
+  const startOf = new Map<number, number>();
+  for (const w of waves ?? []) {
+    if (w.actual_start && w.actual_end) startOf.set(w.wave_number as number, new Date(w.actual_start as string).getTime());
+  }
+  const sentAt = new Map(rows.map((r) => [r.team_id, new Date(r.sent_at).getTime()]));
+  return (teams ?? [])
+    .filter((t) => {
+      const start = t.wave != null ? startOf.get(t.wave as number) : undefined;
+      const sent = sentAt.get(t.id as string);
+      return start != null && sent != null && sent < start;
+    })
+    .map((t) => t.id as string)
+    .sort();
+}
 
 type Row = {
   team_id: string;
@@ -60,7 +100,35 @@ export async function GET() {
     locked: event.locked,
     teams: byTeam,
     waves: (waves ?? []).map((w) => ({ wave_number: w.wave_number, started: !!w.actual_start, ended: !!w.actual_end })),
+    staleHeat: await staleHeatTeams(admin, event.id).catch(() => []),
   });
+}
+
+async function resendStaleHeat(admin: AdminClient, event: Parameters<typeof sendTeamEmail>[1]) {
+  if (event.locked) return fail("This event is locked - the final email covers it.", 409);
+  const queue = await staleHeatTeams(admin, event.id);
+  if (queue.length === 0) return json({ ok: true, sent: 0, failed: 0, skipped: 0, remaining: 0 });
+  const data = await loadEventData(event, admin);
+  const emails = await recipientsFor(admin, queue);
+  const started = Date.now();
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  let remaining = 0;
+  for (let i = 0; i < queue.length; i++) {
+    if (Date.now() - started > BUDGET_MS) {
+      remaining = queue.length - i;
+      break;
+    }
+    const outcome = await sendTeamEmail(admin, event, data, queue[i], "heat", emails.get(queue[i]) ?? [], true).catch(
+      () => "failed" as const
+    );
+    if (outcome === "sent") sent++;
+    else if (outcome === "skipped") skipped++;
+    else failed++;
+    if (i < queue.length - 1) await new Promise((r) => setTimeout(r, GAP_MS));
+  }
+  return json({ ok: true, sent, failed, skipped, remaining });
 }
 
 export async function POST(req: NextRequest) {
@@ -70,6 +138,14 @@ export async function POST(req: NextRequest) {
 
   if (!emailConfigured()) return fail("Email sending isn't connected yet.", 409);
   const body = await readBody(req);
+  if (body?.mode === "resend-stale-heat") {
+    try {
+      return await resendStaleHeat(admin, event);
+    } catch {
+      console.error("admin/results-emails: stale resend failed");
+      return fail("The emails couldn't be sent. Try again in a minute.", 500);
+    }
+  }
   const teamId = typeof body?.teamId === "string" ? body.teamId : "";
   const kind = body?.kind === "final" ? "final" : body?.kind === "heat" ? "heat" : null;
   if (!teamId || !kind || body?.resend !== true) return fail("Choose a team and which email to send.");

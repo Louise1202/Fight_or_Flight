@@ -2529,6 +2529,8 @@ type EmailStatus = {
   locked?: boolean;
   teams: Record<string, { heat?: EmailRecord; final?: EmailRecord }>;
   waves: { wave_number: number; started: boolean; ended: boolean }[];
+  /** Teams whose heat email went out before their heat really ran. */
+  staleHeat?: string[];
 };
 
 function EmailRecordLine({
@@ -2796,6 +2798,31 @@ function ResultsEmailsBox({
 
   const chosen = teamId || teams[0]?.id || "";
 
+  // Real results for teams that were emailed before their heat really ran.
+  const stale = status?.staleHeat ?? [];
+  const [resendingStale, setResendingStale] = useState(false);
+  async function resendStale() {
+    if (
+      !window.confirm(
+        `Send the real heat results to ${stale.length} team${stale.length === 1 ? "" : "s"}?\n\nOnly teams whose results email went out before their heat really ran get it. Each team gets it once.`
+      )
+    )
+      return;
+    setResendingStale(true);
+    setError(null);
+    setMessage(null);
+    const r = await callApi("/api/admin/results-emails", "POST", { mode: "resend-stale-heat" });
+    setResendingStale(false);
+    if (!r.ok) setError(errorOf(r, "The emails couldn't be sent."));
+    else
+      setMessage(
+        `Sent to ${r.data.sent} team${r.data.sent === 1 ? "" : "s"}.` +
+          (r.data.failed ? ` ${r.data.failed} couldn't be sent.` : "") +
+          (r.data.remaining ? ` ${r.data.remaining} still to go - press the button again.` : "")
+      );
+    onChanged();
+  }
+
   // The switch flips at once; it flips back if the save fails.
   const [shown, setShown] = useState<Partial<Record<"email_results_auto" | "email_final_auto", boolean>>>({});
   async function toggle(key: "email_results_auto" | "email_final_auto", value: boolean) {
@@ -2859,6 +2886,23 @@ function ResultsEmailsBox({
         <p role="status" className="mb-3 rounded border border-fofRed px-3 py-2 text-sm text-fofRed">
           Results emails aren&apos;t set up in the database yet (sql/020_results_emails.sql).
         </p>
+      )}
+      {stale.length > 0 && !readOnly && (
+        <div role="status" className="mb-3 rounded border border-fofRed px-3 py-2 text-sm">
+          <p className="text-fofRed">
+            {stale.length} team{stale.length === 1 ? "" : "s"} got a results email before their heat really ran, so it shows
+            no result: {stale.join(", ")}.
+          </p>
+          <button
+            type="button"
+            onClick={resendStale}
+            disabled={resendingStale}
+            aria-busy={resendingStale}
+            className="tap-target mt-2 rounded btn-stamped px-4 font-display disabled:opacity-50"
+          >
+            {resendingStale ? "Sending..." : "Send their real results"}
+          </button>
+        </div>
       )}
 
       {settings && (
